@@ -1,0 +1,258 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-05-09 13:34:37
+ Entorno   : local
+ Directorio: D:\www\Web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------
+
+  Dropping all tables ........................................................................................ 6s DONE
+
+   INFO  Preparing database.  
+
+  Creating migration table ............................................................................. 343.80ms DONE
+
+   INFO  Running migrations.  
+
+  0001_01_01_000000_create_users_table ....................................................................... 1s DONE
+  0001_01_01_000001_create_cache_table ....................................................................... 1s DONE
+  0001_01_01_000002_create_jobs_table ........................................................................ 1s DONE
+  0001_01_01_000003_create_permission_tables ................................................................ 11s DONE
+  0001_01_01_000004_create_departamentos_table ............................................................... 1s DONE
+  0001_01_01_000005_create_ciudades_table .................................................................... 3s DONE
+  0001_01_01_000006_create_clientes_table ................................................................... 14s DONE
+  0001_01_01_000007_create_proveedores_table ................................................................. 9s DONE
+  0001_01_01_000008_create_empresa_table ..................................................................... 5s DONE
+  2025_05_25_041509_create_auditorias_table .................................................................. 5s DONE
+  2026_02_24_010100_create_unidades_medida_table ....................................................... 698.80ms DONE
+  2026_02_24_010200_create_categorias_table .................................................................. 3s DONE
+  2026_02_24_010300_create_marcas_table ...................................................................... 1s DONE
+  2026_02_24_010400_create_impuestos_table ............................................................. 689.95ms DONE
+  2026_02_24_010500_create_formas_pago_table ................................................................. 1s DONE
+  2026_02_24_010600_create_numeraciones_table ................................................................ 1s DONE
+  2026_02_24_020100_create_bancos_table ...................................................................... 3s DONE
+  2026_02_24_020200_create_bodegas_table ..................................................................... 7s DONE
+  2026_02_24_030100_create_productos_table .................................................................. 16s DONE
+  2026_02_24_030200_create_stock_bodegas_table ............................................................... 7s DONE
+  2026_02_24_030201_create_stock_bodega_lotes_table .......................................................... 4s DONE
+  2026_02_24_030202_create_stock_bodega_serials_table ........................................................ 4s DONE
+  2026_02_24_030300_create_movimientos_inventario_table ..................................................... 14s DONE
+  2026_02_24_040100_create_cotizaciones_table ................................................................ 7s DONE
+  2026_02_24_040200_create_detalle_cotizaciones_table ........................................................ 4s DONE
+  2026_02_24_040300_create_remisiones_table .................................................................. 9s DONE
+  2026_02_24_040400_create_detalle_remisiones_table .......................................................... 9s DONE
+  2026_02_24_040500_create_ventas_table ..................................................................... 14s DONE
+  2026_02_24_040600_create_detalle_ventas_table .............................................................. 6s DONE
+  2026_02_24_040700_create_compras_table ..................................................................... 7s DONE
+  2026_02_24_040800_create_detalle_compras_table ............................................................. 7s DONE
+  2026_02_24_050100_create_pago_clientes_table .............................................................. 11s DONE
+  2026_02_24_050200_create_pago_proveedores_table ........................................................... 12s DONE
+  2026_02_24_050300_create_movimientos_bancos_table ......................................................... 10s DONE
+  2026_02_24_060100_create_historico_precios_table ........................................................... 8s DONE
+  2026_02_28_500000_create_formula_transformaciones_table ................................................... 10s DONE
+  2026_03_01_000002_create_auditoria_documentos_table ........................................................ 2s DONE
+  2026_03_02_000000_create_transformaciones_tables .......................................................... 16s DONE
+  2026_03_04_000001_create_traslados_tables ................................................................. 15s DONE
+  2026_03_05_000001_create_cajas_table ....................................................................... 4s DONE
+  2026_03_05_000002_create_movimientos_cajas_table .......................................................... 10s DONE
+  2026_03_07_100000_create_notifications_table ............................................................... 1s DONE
+  2026_03_11_000001_create_devoluciones_table ............................................................... 10s DONE
+  2026_03_11_000002_create_detalles_devoluciones_table ....................................................... 8s DONE
+  2026_03_11_000003_create_movimientos_saldo_cliente_table ................................................... 9s DONE
+  2026_03_16_000001_create_ajustes_inventario_table .......................................................... 7s DONE
+  2026_03_16_000002_create_detalle_ajustes_inventario_table .................................................. 3s DONE
+  2026_03_16_000003_create_conteos_fisicos_table ............................................................. 4s DONE
+  2026_03_16_000004_create_detalle_conteos_fisicos_table ..................................................... 6s DONE
+  2026_04_11_042705_create_personal_access_tokens_table ...................................................... 1s DONE
+  2026_05_04_005733_create_producto_proveedor_codigos_table .................................................. 4s DONE
+  2026_05_04_010431_create_notas_tables ..................................................................... 10s DONE
+  2026_05_08_062550_add_tiene_transformaciones_to_formula_transformaciones_table ....................... 762.20ms DONE
+  2026_05_08_142955_add_con_formula_to_productos_table ................................................. 387.63ms DONE
+
+
+   INFO  Seeding database.  
+
+  Database\Seeders\RoleSeeder ................................................................................ RUNNING  
+Roles y permisos granulares creados correctamente.
+  Database\Seeders\RoleSeeder ......................................................................... 18,789 ms DONE  
+
+  Database\Seeders\UserSeeder ................................................................................ RUNNING  
+Usuario protegido creado: joseforozco@gmail.com
+Usuario auxiliar creado: auxiliar@sigainv.test
+Usuario contador creado: contador@sigainv.test
+Usuario vendedor creado: vendedor@sigainv.test
+Usuario cliente creado: cliente@sigainv.test
+Usuarios de prueba creados correctamente.
+Contraseña por defecto para todos: "password"
+  Database\Seeders\UserSeeder .......................................................................... 3,976 ms DONE  
+
+  Database\Seeders\DepartamentosSeeder ....................................................................... RUNNING  
+  Database\Seeders\DepartamentosSeeder .................................................................... 80 ms DONE  
+
+  Database\Seeders\CiudadesSeeder ............................................................................ RUNNING  
+  Database\Seeders\ciudades\AmazonasSeeder ................................................................... RUNNING  
+10 ciudades insertadas en el departamento del Amazonas.
+  Database\Seeders\ciudades\AmazonasSeeder ............................................................. 1,378 ms DONE  
+
+  Database\Seeders\ciudades\AntioquiaSeeder .................................................................. RUNNING  
+117 ciudades insertadas en el departamento de Antioquia.
+  Database\Seeders\ciudades\AntioquiaSeeder ........................................................... 15,050 ms DONE  
+
+  Database\Seeders\ciudades\AraucaSeeder ..................................................................... RUNNING  
+7 ciudades insertadas en el departamento de Arauca.
+  Database\Seeders\ciudades\AraucaSeeder ................................................................. 907 ms DONE  
+
+  Database\Seeders\ciudades\AtlanticoSeeder .................................................................. RUNNING  
+39 ciudades insertadas en el departamento de Atlántico.
+  Database\Seeders\ciudades\AtlanticoSeeder ............................................................ 4,850 ms DONE  
+
+  Database\Seeders\ciudades\BogotaSeeder ..................................................................... RUNNING  
+Se insertó la ciudad BOGOTÁ.
+  Database\Seeders\ciudades\BogotaSeeder ................................................................. 132 ms DONE  
+
+  Database\Seeders\ciudades\BolivarSeeder .................................................................... RUNNING  
+44 ciudades insertadas en el departamento de Bolívar.
+  Database\Seeders\ciudades\BolivarSeeder .............................................................. 5,266 ms DONE  
+
+  Database\Seeders\ciudades\BoyacaSeeder ..................................................................... RUNNING  
+109 ciudades insertadas en el departamento de Boyacá.
+  Database\Seeders\ciudades\BoyacaSeeder .............................................................. 12,921 ms DONE  
+
+  Database\Seeders\ciudades\CaldasSeeder ..................................................................... RUNNING  
+44 ciudades insertadas en el departamento de Caldas.
+  Database\Seeders\ciudades\CaldasSeeder ............................................................... 5,697 ms DONE  
+
+  Database\Seeders\ciudades\CaquetaSeeder .................................................................... RUNNING  
+17 ciudades insertadas en el departamento de Caquetá.
+  Database\Seeders\ciudades\CaquetaSeeder .............................................................. 2,318 ms DONE  
+
+  Database\Seeders\ciudades\CasanareSeeder ................................................................... RUNNING  
+22 ciudades insertadas en el departamento de Casanare.
+  Database\Seeders\ciudades\CasanareSeeder ............................................................. 2,844 ms DONE  
+
+  Database\Seeders\ciudades\CaucaSeeder ...................................................................... RUNNING  
+43 ciudades insertadas en el departamento del Cauca.
+  Database\Seeders\ciudades\CaucaSeeder ................................................................ 5,431 ms DONE  
+
+  Database\Seeders\ciudades\CesarSeeder ...................................................................... RUNNING  
+23 ciudades insertadas en el departamento del Cesar.
+  Database\Seeders\ciudades\CesarSeeder ................................................................ 2,811 ms DONE  
+
+  Database\Seeders\ciudades\ChocoSeeder ...................................................................... RUNNING  
+35 ciudades insertadas en el departamento del Chocó.
+  Database\Seeders\ciudades\ChocoSeeder ................................................................ 4,444 ms DONE  
+
+  Database\Seeders\ciudades\CordobaSeeder .................................................................... RUNNING  
+29 ciudades insertadas en el departamento de Córdoba.
+  Database\Seeders\ciudades\CordobaSeeder .............................................................. 3,874 ms DONE  
+
+  Database\Seeders\ciudades\CundinamarcaSeeder ............................................................... RUNNING  
+104 ciudades insertadas en el departamento de Cundinamarca.
+  Database\Seeders\ciudades\CundinamarcaSeeder ........................................................ 13,735 ms DONE  
+
+  Database\Seeders\ciudades\GuainiaSeeder .................................................................... RUNNING  
+10 ciudades insertadas en el departamento de Guainía.
+  Database\Seeders\ciudades\GuainiaSeeder .............................................................. 1,371 ms DONE  
+
+  Database\Seeders\ciudades\GuaviareSeeder ................................................................... RUNNING  
+10 ciudades insertadas en el departamento del Guaviare.
+  Database\Seeders\ciudades\GuaviareSeeder ............................................................. 1,047 ms DONE  
+
+  Database\Seeders\ciudades\HuilaSeeder ...................................................................... RUNNING  
+45 ciudades insertadas en el departamento del Huila.
+  Database\Seeders\ciudades\HuilaSeeder ................................................................ 5,791 ms DONE  
+
+  Database\Seeders\ciudades\LaGuajiraSeeder .................................................................. RUNNING  
+25 ciudades insertadas en el departamento de La Guajira.
+  Database\Seeders\ciudades\LaGuajiraSeeder ............................................................ 3,509 ms DONE  
+
+  Database\Seeders\ciudades\MagdalenaSeeder .................................................................. RUNNING  
+35 ciudades insertadas en el departamento del Magdalena.
+  Database\Seeders\ciudades\MagdalenaSeeder ............................................................ 5,078 ms DONE  
+
+  Database\Seeders\ciudades\MetaSeeder ....................................................................... RUNNING  
+47 ciudades insertadas en el departamento del Meta.
+  Database\Seeders\ciudades\MetaSeeder ................................................................. 6,178 ms DONE  
+
+  Database\Seeders\ciudades\NarinoSeeder ..................................................................... RUNNING  
+66 ciudades insertadas en el departamento de Nariño.
+  Database\Seeders\ciudades\NarinoSeeder ............................................................... 8,398 ms DONE  
+
+  Database\Seeders\ciudades\NorteDeSantanderSeeder ........................................................... RUNNING  
+38 ciudades insertadas en el departamento de Norte de Santander.
+  Database\Seeders\ciudades\NorteDeSantanderSeeder ..................................................... 5,255 ms DONE  
+
+  Database\Seeders\ciudades\PutumayoSeeder ................................................................... RUNNING  
+22 ciudades insertadas en el departamento de Putumayo.
+  Database\Seeders\ciudades\PutumayoSeeder ............................................................. 2,607 ms DONE  
+
+  Database\Seeders\ciudades\QuindioSeeder .................................................................... RUNNING  
+14 ciudades insertadas en el departamento del Quindío.
+  Database\Seeders\ciudades\QuindioSeeder .............................................................. 1,522 ms DONE  
+
+  Database\Seeders\ciudades\RisaraldaSeeder .................................................................. RUNNING  
+24 ciudades insertadas en el departamento de Risaralda.
+  Database\Seeders\ciudades\RisaraldaSeeder ............................................................ 2,820 ms DONE  
+
+  Database\Seeders\ciudades\SanAndresSeeder .................................................................. RUNNING  
+10 ciudades insertadas en el departamento de San Andrés y Providencia.
+  Database\Seeders\ciudades\SanAndresSeeder ............................................................ 1,399 ms DONE  
+
+  Database\Seeders\ciudades\SantanderSeeder .................................................................. RUNNING  
+85 ciudades insertadas en el departamento de Santander.
+  Database\Seeders\ciudades\SantanderSeeder ........................................................... 12,393 ms DONE  
+
+  Database\Seeders\ciudades\SucreSeeder ...................................................................... RUNNING  
+30 ciudades insertadas en el departamento de Sucre.
+  Database\Seeders\ciudades\SucreSeeder ................................................................ 4,398 ms DONE  
+
+  Database\Seeders\ciudades\TolimaSeeder ..................................................................... RUNNING  
+42 ciudades insertadas en el departamento del Tolima.
+  Database\Seeders\ciudades\TolimaSeeder ............................................................... 6,837 ms DONE  
+
+  Database\Seeders\ciudades\ValleDelCaucaSeeder .............................................................. RUNNING  
+38 ciudades insertadas en el departamento del Valle del Cauca.
+  Database\Seeders\ciudades\ValleDelCaucaSeeder ........................................................ 6,024 ms DONE  
+
+  Database\Seeders\ciudades\VaupesSeeder ..................................................................... RUNNING  
+10 ciudades insertadas en el departamento de Vaupés.
+  Database\Seeders\ciudades\VaupesSeeder ............................................................... 1,692 ms DONE  
+
+  Database\Seeders\ciudades\VichadaSeeder .................................................................... RUNNING  
+10 ciudades insertadas en el departamento de Vichada.
+  Database\Seeders\ciudades\VichadaSeeder .............................................................. 1,569 ms DONE  
+
+  Database\Seeders\CiudadesSeeder .................................................................... 161,615 ms DONE  
+
+  Database\Seeders\ClientesSeeder ............................................................................ RUNNING  
+  Database\Seeders\ClientesSeeder ........................................................................ 376 ms DONE  
+
+  Database\Seeders\ProveedoresSeeder ......................................................................... RUNNING  
+  Database\Seeders\ProveedoresSeeder ..................................................................... 156 ms DONE  
+
+  Database\Seeders\UnidadesMedidaSeeder ...................................................................... RUNNING  
+  Database\Seeders\UnidadesMedidaSeeder ................................................................ 4,336 ms DONE  
+
+  Database\Seeders\CategoriasSeeder .......................................................................... RUNNING  
+  Database\Seeders\CategoriasSeeder .................................................................... 1,414 ms DONE  
+
+  Database\Seeders\ImpuestosSeeder ........................................................................... RUNNING  
+  Database\Seeders\ImpuestosSeeder ..................................................................... 1,893 ms DONE  
+
+  Database\Seeders\FormasPagoSeeder .......................................................................... RUNNING  
+  Database\Seeders\FormasPagoSeeder .................................................................... 1,609 ms DONE  
+
+  Database\Seeders\BodegasSeeder ............................................................................. RUNNING  
+  Database\Seeders\BodegasSeeder ......................................................................... 102 ms DONE  
+
+✓ Seeders ejecutados correctamente.
+----------------------------------------
+ ExitCode  : 0 (OK)
+ Duracion  : 573,66s
+ Log       : D:\www\Web\sigaInv\logs\migration_20260509_133437.log
+========================================

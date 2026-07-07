@@ -1,0 +1,1031 @@
+===============================================================================
+               TASKLIST SIGAINV — Mayo 2026
+               Organizado por Tareas
+===============================================================================
+
+CONVENCIONES:
+  [OK] Completado y verificado
+  [!]  Pendiente Urgente / Prioritario
+  [~]  En desarrollo / Parcial
+  [--] Diferido / Futuro
+  [X]  Descartado o Reemplazado
+
+===============================================================================
+Tarea 1 — COMPLETADAS
+===============================================================================
+
+[OK] 01. Notas Crédito/Débito
+------------------------------------------------------
+      Modelo, migración, NotaService (saldo cartera + stock),
+      recurso Filament con acciones de confirmación.
+
+[OK] 02. Optimización Bajo Hardware
+------------------------------------------------------
+      Paginación agresiva, lazy loading, eager loading,
+      optimización de sesiones/caché.
+
+===============================================================================
+Tarea 2 — MANTENIMIENTO
+===============================================================================
+
+[OK] 01. Mantenimiento Estructural
+------------------------------------------------------
+  Z1 — Fusionar migraciones ADD en principales.
+  Z2 — Corregir tests pre-existentes fallando.
+  Z3 — Auditar public views de plugins Filament.
+  Z4 — Agregar declare(strict_types=1) a archivos faltantes.
+  Z5 — Refactorizar vistas PDF con layout base.
+  Z6 — Auditar comparaciones de Enum sin ->value.
+  Z7 — Crear trait para badges de navegación.
+  Z8 — Auditar código redundante unificable.
+
+===============================================================================
+Tarea 3 — DIFERIDAS
+===============================================================================
+
+[--] 01. Personalización Menú/Permisos
+------------------------------------------------------
+      Restricción de módulos por rol (Spatie Permissions).
+      Acceso al dashboard por rol.
+
+[--] 02. Filtros en Turnos
+------------------------------------------------------
+      Filtros por rango de fechas (apertura/cierre),
+      por caja, por usuario, por estado (abierto/cerrado).
+
+[--] 03. Reportes de Turnos
+------------------------------------------------------
+      Reporte resumen: total aperturas/cierres por caja,
+      diferencias por usuario, histograma de saldos.
+      Exportable a Excel/PDF desde Filament.
+
+===============================================================================
+Tarea 4 — PRIORITARIA: GENERACIÓN DE PDFs (laravel-mpdf)
+===============================================================================
+
+[OK] 01. Servicio Base — PdfGeneratorService
+------------------------------------------------------
+      Ubicación: app/Services/PdfGeneratorService.php
+      Librería: carlos-meneses/laravel-mpdf 2.1.13 (mPDF 8.x, PHP 8.4 OK)
+      Logo — Estrategia dual:
+        PDF (mPDF):     Base64 — leer archivo desde Storage, convertir a
+                        data:image/...;base64,... Funciona sin depender de
+                        red, idéntico en local y Cloud.
+        Email HTML:     URL  — cascada logo_impresion → logo vía
+                        Storage::disk('directo')->url(). En Cloud apunta
+                        a R2 (URL pública). En local se puede sobreescribir
+                        con campo opcional logo_url_publico en Empresa.
+      Métodos:
+        ├─ generarPdfDesdeVista(string $vista, array $datos, array $opciones): string
+        ├─ obtenerLogoBase64(): string|null
+        ├─ obtenerLogoUrl(): string|null
+        └─ limpiarTemporales(int $horas = 24): int
+      Opciones: formato, orientacion, margen_*, logo_base64, nombre
+      Test: tests/Feature/PdfGeneratorServiceTest.php (3 + 2 skipped)
+
+[OK] 02. Mailable Actualizado — DocumentoPdfMail
+------------------------------------------------------
+      app/Mail/DocumentoPdfMail.php
+      Constructor ahora acepta ?string $pdfPath.
+      attachments() adjunta el PDF on-the-fly con Attachment::fromPath()
+      y nombre según tipo (Factura-Venta-FV-001.pdf).
+      content() usa PdfGeneratorService::obtenerLogoUrl() para el HTML.
+
+[OK] 03. Confirmación Automática — Envío al confirmar
+------------------------------------------------------
+      app/Services/DocumentoEmailService.php
+      Servicio central: enviarDocumento(Venta|Remision|Cotizacion, tipo)
+      Hooks:
+        - VentaService::confirmar() — tras DB::commit()
+        - RemisionService::confirmar() — tras DB::commit()
+        - CotizacionService::cambiarEstado(ENVIADA) — al transicionar
+      Si cliente.email == null, retorna false silenciosamente.
+      Si falla envío, se loguea warning y no bloquea el flujo.
+
+[OK] 04. Reenvío Manual — Botones "Reenviar por correo"
+------------------------------------------------------
+      A) Vista individual (ViewXxx pages):
+         - $this->makeReenviarAction() en trait SendsDocumentEmail
+         - Visible solo si $record->cliente->email !== null
+      B) Bulk Action (ListXxx tables):
+         - App\Filament\Actions\BulkResendEmailAction::make('tipo')
+         - Filtra solo con email; cuenta enviados/omitidos/errores
+         - Aplicado a Ventas, Remisiones, Cotizaciones
+
+[OK] 05. Vistas Blade para PDF
+------------------------------------------------------
+      resources/views/pdfs/
+        ├─ layouts/      (vacío — se reusa pdf/layout.blade.php existente)
+        ├─ ventas/       (vacío — se reusa pdf/documento.blade.php genérico)
+        ├─ cotizaciones/ (vacío — se reusa pdf/documento.blade.php genérico)
+        ├─ conteos/
+        │   ├─ guia-conteo.blade.php
+        │   └─ reporte-diferencias.blade.php
+        └─ emails/
+            └─ documento-resumen.blade.php (ya existe)
+
+[OK] 06. Módulo Conteos Físicos
+------------------------------------------------------
+      Buttons añadidos en ViewConteoFisico:
+        - "Imprimir guía" → route('pdf.conteo.guia')
+        - "Ver diferencias" → route('pdf.conteo.diferencias')
+      Methods nuevos en PdfController:
+        - guiaConteo(ConteoFisico) — usa pdfs/conteos/guia-conteo
+        - diferenciasConteo(ConteoFisico) — usa pdfs/conteos/reporte-diferencias
+      Rutas nuevas: pdf.conteo.guia, pdf.conteo.diferencias
+
+[OK] 07. Módulo Cotizaciones
+------------------------------------------------------
+      PDF adjunto en email al cambiar a ENVIADA.
+      Botón "Reenviar" en ViewCotizacion.
+      Bulk Action "Reenviar cotizaciones" en CotizacionsTable.
+
+[OK] 08. Módulo Ventas / Remisiones
+------------------------------------------------------
+      Confirmación automática: PDF adjunto al confirmar.
+      Reenvío manual individual: ViewVenta, ViewRemision.
+      Reenvío masivo: BulkAction en VentasTable y RemisionsTable.
+
+[OK] 09. Pruebas y Validación
+------------------------------------------------------
+      tests/Feature/PdfGeneratorServiceTest.php (5 tests):
+        - Generación correcta (PDF application/pdf, >1KB)
+        - Logo base64 presente (skip si no hay logo)
+        - URL pública (skip si no hay logo)
+        - limpiarTemporales() borra archivos > 24h
+        - Crea directorio tmp si no existe
+      Pendiente: tests DocumentoEmailService con Mail::fake()
+
+[OK] 10. Dependencias y Referencia
+------------------------------------------------------
+      Librería: carlos-meneses/laravel-mpdf 2.1.13
+                (composer.json: "carlos-meneses/laravel-mpdf": "2.1.13")
+      Config:   config/pdf.php (publicada manualmente)
+      Provider: Mccarlosen\LaravelMpdf\LaravelMpdfServiceProvider
+                registrado en bootstrap/providers.php
+      Disco directo: Storage::disk('directo') para logos
+      Tmp dir: storage/app/tmp/pdf/
+      Comando:  php artisan pdf:limpiar-temporales [--horas=24]
+
+[OK] 11. Validación de Email en Cliente
+------------------------------------------------------
+      App\Filament\Forms\ClienteSelect::make() — helper para Select
+        con helperText dinámico (📧 email / ⚠️ sin email)
+      HasDocumentCreateActions::getSaveAndEmailAction():
+        ->visible(fn () => cliente tiene email) — oculta botón si no
+      Trait SendsDocumentEmail::makeReenviarAction():
+        ->visible(fn () => cliente tiene email) — oculta botón si no
+      ClienteQuickCreate: email ya es required (validación existente)
+
+===============================================================================
+Tarea 5 — REFACTORIZACIÓN Z8 (CÓDIGO REDUNDANTE ~1.049 LÍNEAS)
+========================================================================
+      Pendiente de iniciar. Audit completado el 2026-05-29.
+
+[OK] 01. Helper de Totales Compartido (~264 líneas)
+------------------------------------------------------
+      Ubicación propuesta: app/Filament/Schemas/DocumentTotalsHelper.php
+      Problema: 4 formularios (Venta, Remision, Compra, Cotizacion)
+        definen los mismos métodos y secciones con lógica idéntica.
+      Métodos a extraer:
+        ├─ updateLineSubtotal(): calcular subtotal por línea
+        ├─ updateTotals(): loop de detalles, 5 $set() finales
+        ├─ Section Totales: 5 TextInput (subtotal, descuento, impuestos, total, saldo)
+        └─ ivaCero query helper: Impuesto::where('tipo','IVA')->where('porcentaje',0)->first()
+      Archivos afectados:
+        ├─ app/Filament/Resources/Ventas/Schemas/VentaForm.php
+        ├─ app/Filament/Resources/Remisions/Schemas/RemisionForm.php
+        ├─ app/Filament/Resources/Compras/Schemas/CompraForm.php
+        └─ app/Filament/Resources/Cotizacions/Schemas/CotizacionForm.php
+
+[OK] 02. Clases Base para Actions Confirmar/Anular (~450 líneas)
+------------------------------------------------------
+      Problema: 14 archivos Action siguen 3-4 plantillas casi idénticas.
+        Difieren solo en label, Service class, Enum class, si requiere razón.
+      Solución propuesta:
+        ├─ AbstractConfirmAction — base para ConfirmarVenta/Remision/Traslado/
+        │  Devolucion y RegistrarCompra (5 clases, ~43 líneas c/u → ~15)
+        └─ AbstractAnularAction — base para AnularVenta/Remision/Compra/
+           Devolucion/Traslado (5 clases, ~50 líneas c/u → ~18)
+      Archivos afectados: app/Filament/Resources/*/Actions/*.php (14 archivos)
+
+[OK] 03. PrintAction Factory (~25 líneas)
+------------------------------------------------------
+      Ubicación propuesta: app/Filament/Actions/PrintAction.php
+      Problema: Action::make('imprimir') definido 5 veces con mismos args
+      Método:
+        └─ PrintAction::make(string $routeName): Action
+      Archivos afectados:
+        ├─ app/Filament/Resources/Ventas/Tables/VentasTable.php
+        ├─ app/Filament/Resources/Remisions/Tables/RemisionsTable.php
+        ├─ app/Filament/Resources/Cotizacions/Tables/CotizacionsTable.php
+        ├─ app/Filament/Resources/Ventas/Pages/EditVenta.php
+        └─ app/Filament/Resources/Remisions/Pages/EditRemision.php
+
+[OK] 04. Trait afterCreate() para Documentos (~30 líneas)
+------------------------------------------------------
+      Ubicación propuesta: app/Traits/HasDocumentAfterCreate.php
+      Problema: afterCreate() en CreateVenta/Remision/Cotizacion repite
+        el mismo patrón de pendingPrint + pendingEmail
+      Flujo a unificar:
+        ├─ pendingPrint: window.open(route('pdf.XXX', record))
+        └─ pendingEmail: load relations → DocumentoPdfMail → Notification
+      Archivos afectados:
+        ├─ app/Filament/Resources/Ventas/Pages/CreateVenta.php
+        ├─ app/Filament/Resources/Remisions/Pages/CreateRemision.php
+        └─ app/Filament/Resources/Cotizacions/Pages/CreateCotizacion.php
+
+[OK] 05. Base QuickCreate para Personas (~20 líneas)
+------------------------------------------------------
+      Ubicación propuesta: app/Filament/Forms/PersonaQuickCreate.php
+      Problema: ClienteQuickCreate (63 lns) y ProveedorQuickCreate (66 lns)
+        comparten ~80%: mismos campos, notificación, ciudad/departamento fijos
+      Diferencias:
+        ├─ Model: Cliente vs Proveedor
+        ├─ Estado enum: ClienteEstado::ACTIVO vs ProveedorEstado::ACTIVO
+        └─ Validaciones extra: unique en documento y email para Proveedor
+      Archivos afectados:
+        ├─ app/Filament/Forms/ClienteQuickCreate.php
+        ├─ app/Filament/Forms/ProveedorQuickCreate.php
+        └─ 4 formularios que los consumen (VentaForm, RemisionForm, CotizacionForm, CompraForm)
+
+[OK] 06. Centralizar Filtros de Tabla (~30 líneas)
+------------------------------------------------------
+      Problema: mismos filtros definidos inline en múltiples tablas
+      Filtros a centralizar:
+        ├─ SelectFilter::make('activo') — 6 tablas (Productos, Marcas,
+        │  Categorias, Impuestos, FormaPagos, UnidadMedidas)
+        ├─ SelectFilter::make('bodega_id') — 6 tablas (Transformacion,
+        │  StockBodegas, MovimientoInventarios, ConteoFisicos,
+        │  AjusteInventarios, etc.)
+        └─ BulkActionGroup::make([DeleteBulkAction::make()]) — 14+ tablas
+      Solución propuesta: Closure helpers o filtros reutilizables
+
+===============================================================================
+Tarea 6 — CORRECCIÓN DE DISCREPANCIAS BD/MODELO/FILAMENT (Audit v3.16.8)
+===============================================================================
+  Hallazgos del audit comparativo 2026-06-04. Mismatches entre columnas
+  enum de MySQL, casts Eloquent y opciones hardcodeadas en Filament.
+  > Informe completo: contexto/Auditorias/Auditoria_BD_Modelo_Filament_2026-06-04.txt
+
+[OK] 01. Crear 4 Enums PHP faltantes
+------------------------------------------------------
+  Columnas enum en BD sin enum PHP correspondiente.
+  Convención: app/Enums/{Dominio}{Campo}.php, BackedEnum string.
+  ├─ PortalAccesoEnum      → 'sin_acceso','pendiente','activo'
+  ├─ EmpresaTipoPersona    → 'natural','juridica'
+  ├─ EmpresaRegimenTributario → 'simplificado','comun','gran_contribuyente'
+  └─ AuditoriaOperacion    → 'INSERT','UPDATE','DELETE'
+  Cada enum debe tener: label(), color(), icon() (donde aplique).
+
+[OK] 02. Añadir casts en modelos para los nuevos enums
+------------------------------------------------------
+  Editar SOLO $casts, sin migración (columna ya es enum en BD).
+  ├─ app/Models/Cliente.php   → 'portal_acceso' => PortalAccesoEnum::class
+  │   (reemplaza el cast actual 'string' con comentario)
+  ├─ app/Models/Empresa.php  → 'tipo_persona'        => EmpresaTipoPersona::class
+  │                            'regimen_tributario'  => EmpresaRegimenTributario::class
+  └─ app/Models/Auditoria.php → 'operacion'          => AuditoriaOperacion::class
+
+[OK] 03. Reemplazar opciones hardcodeadas en Filament por enums
+------------------------------------------------------
+  3 selects con arrays literales → delegar al enum.
+  ├─ app/Filament/Resources/ClienteResource.php:191-198
+  │    Select 'portal_acceso' → ->options(PortalAccesoEnum::class)
+  │    Quitar el ->default('sin_acceso'), usar ->default(PortalAccesoEnum::SIN_ACCESO)
+  ├─ app/Filament/Resources/Empresas/Schemas/EmpresaForm.php:54-61
+  │    Select 'tipo_persona' → ->options(EmpresaTipoPersona::class)
+  │    ->default(EmpresaTipoPersona::JURIDICA)
+  └─ app/Filament/Resources/Empresas/Schemas/EmpresaForm.php:112-122
+       Select 'regimen_tributario' → ->options(EmpresaRegimenTributario::class)
+       ->default(EmpresaRegimenTributario::COMUN)
+
+[OK] 04. Cast booleano faltante en AjusteInventario
+------------------------------------------------------
+  BD: 'es_saldo_inicial' = tinyint(1) default 0.
+  Modelo AjusteInventario: sin cast (devuelve int 0/1 crudo).
+  Referencia: ConteoFisico SÍ lo castea a 'boolean'.
+  └─ app/Models/AjusteInventario.php
+       Añadir 'es_saldo_inicial' => 'boolean' al array $casts.
+
+[OK] 05. Asimetría Devolucion vs DevolucionCompra (motivo)
+------------------------------------------------------
+  Decidir entre:
+  A) Crear enum DevolucionCompraMotivo y migrar 'motivo' de varchar(50)
+     a enum — manteniendo la paridad con Devolucion (que sí usa enum).
+  B) Documentar la diferencia: DevolucionCompra es nota libre
+     (varchar), Devolucion es catálogo cerrado.
+  Archivos afectados (si opción A):
+  ├─ database/migrations/{timestamp}_convert_devoluciones_compras_motivo_to_enum.php
+  ├─ app/Enums/DevolucionCompraMotivo.php (nuevo)
+  └─ app/Models/DevolucionCompra.php (cast nuevo)
+
+[OK] 06. Evaluar enums huérfanos (BancoCategoria, CajaCategoria)
+------------------------------------------------------
+  Las tablas bancos y cajas NO tienen columna 'categoria'.
+  CajaCategoria podría usarse en movimientos_cajas.categoria
+  (actualmente varchar(50) sin cast).
+  Decisión:
+  ├─ Si muertos: eliminar app/Enums/BancoCategoria.php y CajaCategoria.php
+  └─ Si vivos: migrar movimientos_cajas.categoria a enum + añadir cast
+
+[OK] 07. Crear migración pendiente turnos.bodega_id
+------------------------------------------------------
+  Migración referenciada en Contexto.txt pero NO EXISTE en
+  database/migrations/. La tabla turnos tiene bodega_id como
+  int(11) sin FK, mientras el resto usa bigint unsigned + FK.
+  Acciones:
+  ├─ Crear app/Database/Migrations/2026_06_03_060855_fix_turnos_bodega_id_type.php
+  │    Schema::table('turnos', fn (Blueprint $t) =>
+  │        $t->unsignedBigInteger('bodega_id')->nullable()->default(1)->change());
+  ├   (o drop+recreate según versión de doctrine/dbal disponible)
+  └─ El usuario la ejecutará manualmente (regla: no auto-migrate)
+
+[OK] 08. Renombrar carpetas Portal (cosmético)
+------------------------------------------------------
+  'app/Filament/Resources/Cliente/' contiene CotizacionPortals,
+  FacturaPortals, RemisionPortals — son sub-Resources del PORTAL,
+  NO el Resource principal.
+  'app/Filament/Resources/Proveedor/' presumiblemente igual.
+  Acción:
+  ├─ Rename Cliente/     → PortalClientes/
+  └─ Rename Proveedor/   → PortalProveedores/
+  (Verificar referencias en PanelProvider antes de renombrar)
+
+[OK] 09. Actualizar EmpresaInfolist para usar enums
+------------------------------------------------------
+  app/Filament/Resources/Empresas/Schemas/EmpresaInfolist.php
+  TextEntry 'tipo_persona' y 'regimen_tributario' deben formatear
+  con ->formatStateUsing(fn ($state) => $state?->label()) una vez
+  que los casts estén activos (Tarea 6.02).
+
+[OK] 10. Tests para enums nuevos
+------------------------------------------------------
+  ├─ ClienteTest:    asignar todos los valores de PortalAccesoEnum
+  ├─ EmpresaTest:    asignar todos los valores de EmpresaTipoPersona
+  │                  y EmpresaRegimenTributario
+  └─ Verificar que Badge columns en EmpresaResource consumen label()
+
+[OK] 11. Verificación final
+------------------------------------------------------
+  ├─ php artisan test --compact      (deben seguir pasando 333 tests)
+  ├─ ./vendor/bin/pint --dirty --format agent
+  ├─ Grep de regresión:
+  │   Select-String -Path app/Filament/Resources -Pattern "'sin_acceso'",
+  │   "'natural'", "'juridica'", "'simplificado'", "'comun'",
+  │   "'gran_contribuyente'"  → debe ser 0 resultados
+  └─ Verificar visualmente en /admin que los Selects muestran labels
+
+===============================================================================
+Tarea 7 — PORTAL DE CLIENTES — CORRECCIONES Y CIERRE DE BRECHAS (2026-06-05)
+===============================================================================
+  Auditoría del estado del panel /clientes (Sesión 58). El portal es
+  funcional para login + dashboard + listado filtrado, pero tiene 6
+  brechas que afectan UX y completitud. No hay que rehacer, solo cerrar.
+
+[OK] 01. Eliminar el 404 del ViewAction en las 3 tablas
+------------------------------------------------------
+  Las tablas FacturaPortals/RemisionPortals/CotizacionPortals exponen
+  ViewAction::make() en Tables/*PortalsTable.php:50,53,49
+  pero getPages() solo registra 'index' en cada *Resource.
+  Decisión: NO agregar páginas 'view' (el cliente no debe editar
+  nada). Reemplazar ViewAction por Action que abra un Filament
+  Infolist en modal con los datos del documento.
+  Archivos:
+  ├─ app/Filament/Resources/PortalClientes/FacturaPortals/Tables/FacturaPortalsTable.php
+  │     Reemplazar ViewAction por Action::make('ver')->modalContent(...)
+  ├─ app/Filament/Resources/PortalClientes/RemisionPortals/Tables/RemisionPortalsTable.php
+  └─ app/Filament/Resources/PortalClientes/CotizacionPortals/Tables/CotizacionPortalsTable.php
+  Opción B más simple: cambiar ViewAction::make() por Action::make('ver')
+  ->modal()->modalContent(view('portal.partials.doc-{tipo}', ['r' => $r]))
+  pendiente de Blade dedicado (ver Tarea 7.04).
+
+[OK] 02. Crear página de detalle (Infolist) para los 3 documentos
+------------------------------------------------------
+  Crear Infolist por modelo reutilizando los existentes del admin
+  si ya existen (buscar app/Filament/Resources/{Venta,Remision,Cotizacion}/
+  Schemas/*Infolist.php y mover/duplicar a PortalClientes).
+  ├─ FacturaPortals/Schemas/FacturaPortalInfolist.php   (nuevo)
+  ├─ RemisionPortals/Schemas/RemisionPortalInfolist.php (nuevo)
+  └─ CotizacionPortals/Schemas/CotizacionPortalInfolist.php (nuevo)
+  Cada Infolist debe:
+  ├─ Mostrar encabezado del documento (numero, fecha, total, estado)
+  ├─ Repeater de productos (descripcion, cantidad, precio, subtotal)
+  └─ NO incluir acciones de edición (read-only)
+
+[OK] 03. Acción de descarga/impresión de PDF en cada tabla
+------------------------------------------------------
+  Agregar Action 'descargar-pdf' (o 'imprimir') en las 3 tablas que
+  dispare route/download de los PDFs ya existentes. Verificar
+  rutas: route('ventas.pdf', $r), 'remisiones.pdf', 'cotizaciones.pdf'
+  (buscar routes/web.php). Solo si los PDF ya se generan en el admin;
+  si no, apuntar a la misma vista imprimible que use el admin.
+  Archivos: mismos Tables/*.php de Tarea 7.01.
+
+[OK] 04. Evaluar página de registro público del portal
+------------------------------------------------------
+  El flash 'registro_pendiente' se lee en Cliente/Pages/Auth/Login.php:21
+  pero NO existe una Register para el panel 'clientes' (la única
+  Register está en app/Filament/Pages/Auth/Register.php — admin).
+  Decisión con el usuario:
+  A) Autoservicio: crear app/Filament/Cliente/Pages/Auth/Register.php
+     que cree User con estado=PENDIENTE + flag portal_acceso=PENDIENTE
+     en un cliente NUEVO (sin cliente_id previo → bloqueado en admin).
+  B) No autoservicio: quitar la lectura de 'registro_pendiente' del
+     Login del cliente y documentar que el alta es manual.
+  Por defecto: opción B (más segura, evita spam). Confirmar con usuario.
+
+[OK] 05. Migrar ClienteDashboard::getStats() a Widgets v5
+------------------------------------------------------
+  app/Filament/Cliente/Pages/ClienteDashboard.php usa getStats():array
+  con clase Stat — API deprecada en Filament v4/v5.
+  Migrar a:
+  ├─ Clase Widget: app/Filament/Cliente/Widgets/ClienteStatsWidget.php
+  │     extends Filament\Widgets\StatsOverviewWidget (v5)
+  │     con protected function getStats(): array
+  └─ Registrar en ClientePanelProvider::$widgets (no en pages)
+  Mantener la misma lógica de filtros por cliente_id y los mismos
+  5 indicadores (Facturas, Total Facturado, Saldo, Remisiones, Cotic.).
+
+[OK] 06. Tests de aislamiento del portal
+------------------------------------------------------
+  Crear tests/Feature/Portal/PortalAccesoTest.php:
+  ├─ cliente autenticado ve SOLO sus facturas/remisiones/cotizaciones
+  ├─ cliente con portal_acceso=sin_acceso NO puede acceder al panel
+  ├─ cliente inactivo (UserEstado!=ACTIVO) NO puede hacer login
+  ├─ usuario con rol 'vendedor' NO puede acceder al panel 'clientes'
+  └─ getTableQuery() retorna 0 filas si Auth::user()->cliente es null
+  Usar actingAs() + factories existentes (Cliente, User, Venta, etc.).
+
+[OK] 07. Verificación final
+------------------------------------------------------
+  ├─ php artisan test --compact --filter=Portal   (deben pasar los nuevos)
+  ├─ php artisan test --compact                    (regresión 359 tests)
+  ├─ ./vendor/bin/pint --dirty --format agent
+  ├─ Levantar serve, login con cliente de prueba en /clientes,
+  │   verificar dashboard + 3 tablas + acciones de modal/PDF
+  └─ Grep: Select-String 'ViewAction::make' app/Filament/Resources/PortalClientes
+      → debe ser 0 resultados tras Tarea 7.01
+
+===============================================================================
+===============================================================================
+===============================================================================
+Tarea 8 — MIGRACIÓN DEL PORTAL A CLIENTE AUTHENTICATABLE
+===============================================================================
+  Cambio arquitectónico confirmado con el usuario 2026-06-06: el portal
+  /clientes usará la tabla `clientes` directamente como Authenticatable
+  (en lugar de crear un User en la tabla `users` con doble rol).
+
+  Por qué este cambio (vs. plan anterior con User doble):
+    - Resuelve de raíz las 3 fallas del plan anterior:
+        1. Desactivar el portal no afecta al staff (tablas separadas)
+        2. Regenerar contraseña no afecta al staff (no hay login staff)
+        3. Sync de email no afecta al staff (email solo en Cliente)
+    - Una identidad por cliente (más simple conceptualmente)
+    - El cliente gestiona su propia cuenta
+    - Auditoría del portal usa cliente_id directamente
+    - Solo 2 clientes en BD (verificado) → costo de migración de datos trivial
+
+  Lo que se conserva del plan anterior (compatible con DDD lite):
+    - Arquitectura DDD: Enums/Services/Models thin
+    - Email encolado (ShouldQueue) para credenciales
+    - Password plana NUNCA en logs
+    - Re-activación regenera password
+    - Forzar cambio de contraseña en primer login (password_changed_at)
+    - Email es solo editable por admin (FilamentEditProfilePlugin:
+      shouldShowEmailForm(false) en ClientePanelProvider.php:108)
+
+  Convenciones aplicadas (verificadas):
+    - migrate: solo generar, ejecutar manual
+    - rule 13: ALTER a tabla inmutable (0001_01_01_000006) — la principal
+      NO se toca, se crea migración 2026_*
+    - rule 14: actualizar modelos, recursos, enums, fillables
+    - declare(strict_types=1) en todos los PHP nuevos
+    - return types obligatorios
+    - BackedEnum string para nuevos enums
+    - Tests con Pest + RefreshDatabase
+
+[OK] 01. Migración ALTER — agregar columnas de auth a clientes
+------------------------------------------------------
+  Archivo: database/migrations/2026_06_06_000001_add_auth_columns_to_clientes.php
+  Columnas a agregar (todas nullable para no romper los 2 clientes existentes):
+  ├─ password              string(255)  nullable  (Hash::make())
+  ├─ remember_token        string(100)  nullable  (Auth estándar)
+  ├─ email_verified_at     timestamp    nullable  (Auth estándar)
+  ├─ password_changed_at   timestamp    nullable  (null = debe cambiar)
+  └─ portal_last_login_at  timestamp    nullable  (auditoría opcional)
+  Índices:
+  └─ index('email')  // ya existe por el unique() de la migración principal
+  Down: dropColumn de las 5 columnas (rollback limpio)
+  NO tocar: la migración 0001_01_01_000006 (inmutable por convención del proyecto)
+
+[OK] 02. Cliente implements Authenticatable
+------------------------------------------------------
+  Archivo: app/Models/Cliente.php
+  Cambios:
+  ├─ use Illuminate\Foundation\Auth\User as Authenticatable; (en vez de Model)
+  ├─ implements Authenticatable (en vez de solo Model)
+  ├─ Métodos del contrato (6):
+  │   ├─ getAuthIdentifierName(): string  → 'id'
+  │   ├─ getAuthIdentifier(): mixed      → return $this->id
+  │   ├─ getAuthPasswordName(): string    → 'password'
+  │   ├─ getAuthPassword(): string        → return $this->password
+  │   ├─ getRememberToken(): string       → return $this->remember_token
+  │   ├─ setRememberToken($value): void   → $this->remember_token = $value
+  │   └─ getRememberTokenName(): string   → 'remember_token'
+  ├─ $hidden += ['password', 'remember_token']
+  └─ $casts += [
+        'email_verified_at'    => 'datetime',
+        'password_changed_at'  => 'datetime',
+        'portal_last_login_at' => 'datetime',
+        // 'password' ya tiene cast 'hashed' en Laravel 12+
+    ]
+
+[OK] 03. Configurar guard 'cliente' y provider 'clientes'
+------------------------------------------------------
+  Archivo: config/auth.php
+  Cambios en sección 'guards':
+    'cliente' => [
+        'driver' => 'session',
+        'provider' => 'clientes',
+    ],
+  Cambios en sección 'providers':
+    'clientes' => [
+        'driver' => 'eloquent',
+        'model' => App\Models\Cliente::class,
+    ],
+  Cambios en sección 'passwords':
+    'clientes' => [
+        'provider' => 'clientes',
+        'table' => 'password_reset_tokens',
+        'expire' => 60,
+        'throttle' => 60,
+    ],
+  El guard 'web' + provider 'users' se conserva intacto (sigue siendo el
+  default para el panel /admin del staff).
+
+[OK] 04. ClientePanelProvider usa authGuard 'cliente'
+------------------------------------------------------
+  Archivo: app/Providers/Filament/ClientePanelProvider.php
+  Cambios:
+  ├─ ->authGuard('cliente')  (en vez de 'web' que tenía en línea 88)
+  ├─ ->brandName() y ->brandLogo() — sin cambios
+  ├─ FilamentEditProfilePlugin:
+  │   - shouldShowEmailForm(false)  (ya está, línea 108)
+  │   - shouldShowEditPasswordForm(true)  (ya está, línea 109)
+  │   - Verificar que el plugin funcione con Cliente (no User); si falla,
+  │     reemplazarlo por página propia CambiarPassword (Tarea 8.10)
+  └─ ->authMiddleware([Authenticate::class]) — sin cambios
+
+[OK] 05. Migración de los 2 clientes existentes
+------------------------------------------------------
+  Archivo: database/seeders/ClientesPortalSeeder.php (nuevo)
+  Script one-shot (NO se ejecuta automáticamente; el usuario lo corre manual):
+    use Illuminate\Support\Facades\Hash;
+    use Illuminate\Support\Str;
+    use App\Models\Cliente;
+    public function run(): void
+    {
+        Cliente::query()
+            ->whereNotNull('user_id_portal')
+            ->each(function (Cliente $cliente): void {
+                $passwordPlano = Str::random(12);
+                $cliente->forceFill([
+                    'password'            => Hash::make($passwordPlano),
+                    'password_changed_at' => null,  // forzar cambio
+                    'remember_token'      => Str::random(60),
+                ])->save();
+                // Enviar email con credenciales (Mail::raw o Mailable dedicado)
+                Mail::to($cliente->email)->queue(
+                    new PortalCredencialesMail($cliente, $passwordPlano)
+                );
+                Log::info("Portal migrado para cliente id={$cliente->id}");
+            });
+    }
+  El usuario correrá: php artisan db:seed --class=ClientesPortalSeeder
+  Los 2 clientes quedan con password temporal y deben cambiarla al primer login.
+
+[OK] 06. Limpieza de Users huérfanos del portal
+------------------------------------------------------
+  Decisión a tomar: ¿qué hacer con los Users en users que tienen rol 'cliente'
+  y fueron creados SOLO para el portal?
+  Opciones (anotar la decisión en bitácora al ejecutar):
+  A) Eliminarlos físicamente (perder FK de auditorias.usuario_id si existía)
+  B) Dejarlos pero revocar el rol 'cliente' → quedan inertes
+  C) Marcarlos con campo 'es_portal_huerfano' = true y desactivar (estado=INACTIVO)
+  Recomendación: B (revocar rol). Mantiene el User para auditoría de FK, pero
+  deja de tener acceso. Más seguro y reversible.
+  Script (en el mismo ClientesPortalSeeder o comando aparte):
+    use Spatie\Permission\Models\Role;
+    $clienteRole = Role::findByName('cliente');
+    $clienteRole->users()->detach();
+  Esto NO elimina los Users, solo les quita el rol 'cliente'.
+  Si tenían otros roles (staff), los conserva.
+  Anotar en bitácora: "Users X, Y con rol cliente fueron desvinculados".
+
+[OK] 07. Reescribir Login del panel /clientes
+------------------------------------------------------
+  Archivo: app/Filament/Cliente/Pages/Auth/Login.php
+  Cambios:
+  ├─ El form usa ->email() y ->password() estándar (sin cambios visibles)
+  ├─ En authenticate():
+  │   - Validar: Cliente::where('email', $email)->where('estado', 'activo')->first()
+  │   - Si el cliente existe pero cliente->password es null → throw ValidationException
+  │     ("No tienes acceso al portal. Contacta al administrador.")
+  │   - Si el cliente existe y password verificado:
+  │     * Auth::guard('cliente')->login($cliente, $remember)
+  │     * $cliente->portal_last_login_at = now(); $cliente->save()
+  │     * Hook post-auth (Tarea 8.09)
+  ├─ getRedirectUrl():
+  │   - Si password_changed_at === null → /clientes/cambiar-password
+  │   - Si no → /clientes
+  └─ Remover validación de UserEstado (ya no aplica; ahora es cliente->estado)
+
+[OK] 08. User::canAccessPanel rechaza Users de staff en panel 'clientes'
+------------------------------------------------------
+  Archivo: app/Models/User.php
+  Cambio en el método canAccessPanel() (líneas 94-107):
+  - Eliminar el case 'clientes' (ya no aplica — los clientes no son Users)
+  - O dejarlo defensivo retornando false explícitamente
+  Cambio resultante:
+    'admin' => $this->hasAnyRole(['administrador','auxiliar','contador','vendedor']),
+    'clientes' => false,  // los clientes usan guard 'cliente', no son Users
+    default => false,
+  Y eliminar el método hasPortalAccess() privado (ya no se usa).
+  Eliminable también: relación User::cliente() (HasOne con user_id_portal)
+  si en Tarea 8.06 se decide que los Users del portal no se referencian más.
+  Decisión final sobre si eliminar la relación: ver 8.15 verificación.
+
+[OK] 09. Hook post-auth: redirigir si debe cambiar password
+------------------------------------------------------
+  Cubierto en Tarea 8.07 (getRedirectUrl del Login).
+  Verificación adicional: el middleware de Filament (Authenticate) ya filtra
+  a usuarios no autenticados. No requiere middleware custom.
+
+[OK] 10. Página CambiarPassword (read-only para forzar cambio)
+------------------------------------------------------
+  Archivo: app/Filament/Cliente/Pages/CambiarPassword.php (nuevo)
+  extends Filament\Pages\Page
+  ├─ Form: password actual (current_password rule) + nuevo + confirmación
+  ├─ Al guardar:
+  │   - Valida current_password con Hash::check
+  │   - $cliente->password = Hash::make($nuevo)
+  │   - $cliente->password_changed_at = now()
+  │   - $cliente->save()
+  │   - Notification::success()
+  │   - redirect to /clientes
+  ├─ Visible en sidebar navegación como "Cambiar Contraseña"
+  ├─ Registrar en ClientePanelProvider.php ->pages([CambiarPassword::class, ...])
+  └─ Si el cliente no tiene password temporal (caso raro): permitir setear una
+     nueva directamente sin pedir la actual.
+
+[OK] 11. Mailable PortalCredencialesMail + vista Blade
+------------------------------------------------------
+  Archivos nuevos:
+  ├─ app/Mail/PortalCredencialesMail.php
+  │     implements ShouldQueue
+  │     uses Queueable, SerializesModels
+  │     constructor(public Cliente $cliente, public string $passwordPlano)
+  │     envelope(): Subject "Bienvenido al Portal de Clientes - {Empresa}"
+  │     content(): view('emails.portal.credenciales')
+  └─ resources/views/emails/portal/credenciales.blade.php
+        Contenido:
+        ├─ Saludo personalizado con {{ $cliente->nombre }}
+        ├─ Email de acceso: {{ $cliente->email }}
+        ├─ Contraseña temporal (en <strong> con copy-to-clipboard opcional)
+        ├─ Link al portal: route('filament.clientes.auth.login') o url('/clientes/login')
+        ├─ Advertencia: "Por seguridad, cambie su contraseña al primer ingreso"
+        └─ Footer corporativo (datos de Empresa::actual())
+  Idéntico al plan anterior, sin User.
+
+[OK] 12. Sección "Acceso al Portal" en ClienteResource
+------------------------------------------------------
+  Archivo: app/Filament/Resources/ClienteResource.php
+  En la sección existente "Portal de Cliente", agregar/ajustar:
+  ├─ Placeholder::make('estado_portal')
+  │   ->label('Estado del acceso al portal')
+  │   ->content(fn (Cliente $record) =>
+  │       match(true) {
+  │           is_null($record->password)        => '⚪ Sin acceso',
+  │           is_null($record->password_changed_at) => '🟡 Pendiente cambio de contraseña',
+  │           default                           => '🟢 Activo',
+  │       }
+  │   )
+  ├─ Placeholder::make('password_changed_at')
+  │   ->label('Último cambio de contraseña')
+  │   ->content(fn (Cliente $record) =>
+  │       $record->password_changed_at?->diffForHumans() ?? 'Nunca'
+  │   )
+  ├─ Placeholder::make('portal_last_login_at')
+  │   ->label('Último acceso al portal')
+  │   ->content(fn (Cliente $record) =>
+  │       $record->portal_last_login_at?->diffForHumans() ?? 'Nunca'
+  │   )
+  ├─ Action::make('generar-password')
+  │   ->label('Generar contraseña de acceso')
+  │   ->icon('heroicon-o-key')
+  │   ->color('primary')
+  │   ->requiresConfirmation()
+  │   ->modalHeading('Generar contraseña de acceso al portal')
+  │   ->modalDescription('Se generará una contraseña aleatoria y se enviará
+  │                       al email del cliente.')
+  │   ->action(function (Cliente $record): void {
+  │       $passwordPlano = Str::random(12);
+  │       $record->forceFill([
+  │           'password'            => Hash::make($passwordPlano),
+  │           'password_changed_at' => null,  // forzar cambio
+  │       ])->save();
+  │       Mail::to($record->email)->queue(
+  │           new PortalCredencialesMail($record, $passwordPlano)
+  │       );
+  │       Notification::make()->title('Contraseña enviada')->success()->send();
+  │   })
+  │   ->visible(fn (Cliente $record) =>
+  │       $record->portal_acceso?->value === PortalAccesoEnum::ACTIVO->value
+  │   )
+  └─ El campo 'portal_acceso' ya existe; el trigger ya no es Observer
+     (la generación es manual vía este botón, no automática al cambiar
+     portal_acceso). Decisión: activación sigue siendo manual vía el botón.
+
+[OK] 13. Eliminar dependencia de User::cliente y user_id_portal
+------------------------------------------------------
+  Archivos a revisar (grep 'user_id_portal\|User::cliente\|->cliente()' en app/):
+  ├─ app/Models/User.php — User::cliente() HasOne (línea 116-119) — evaluar
+  │   si se elimina (ya no se necesita; los clientes se autentican solos)
+  ├─ app/Models/Cliente.php — Cliente::portalUser() belongsTo (línea 70-73) —
+  │   se elimina (no se necesita más)
+  └─ Otros usos: ejecutar grep para encontrar referencias huérfanas
+  Decisión: eliminar AMBAS relaciones para evitar confusión.
+  El campo user_id_portal en la tabla clientes:
+  ├─ Opción A: dejar la columna nullable (deprecated, no se usa)
+  ├─ Opción B: eliminar la columna en una migración posterior
+  Recomendación: A por ahora (no romper nada); eliminar en tarea futura si
+  se confirma que no se necesita.
+
+[OK] 14. Reescribir tests del portal
+------------------------------------------------------
+  Archivo: tests/Feature/Portal/PortalAccesoTest.php (REEMPLAZAR el contenido)
+  Helpers a actualizar (de 16 tests con actingAs($user) a actingAs con guard cliente):
+  ├─ crearClienteConAcceso(): Cliente  (crea Cliente con password temporal)
+  ├─ crearVentaParaCliente(int, VentaEstado): Venta
+  ├─ crearRemisionParaCliente(int, RemisionEstado): Remision
+  └─ crearCotizacionParaCliente(int, CotizacionEstado): Cotizacion
+
+  Cobertura nueva:
+  ├─ Acceso al panel:
+  │   ├─ Cliente activo + password seteado → 200 OK
+  │   ├─ Cliente activo + portal_acceso=sin_acceso → 403
+  │   ├─ Cliente activo + portal_acceso=pendiente → 403
+  │   ├─ Cliente inactivo → 403 (estado=inactivo en clientes)
+  │   ├─ Cliente con password null → 403
+  │   ├─ User staff intentando entrar a /clientes → 403
+  │   └─ Anónimo → redirect a /clientes/login
+  ├─ Aislamiento de listados (livewire):
+  │   ├─ Cliente ve solo SUS facturas / remisiones / cotizaciones
+  │   ├─ Facturas en BORRADOR NO visibles
+  │   └─ Cliente sin ventas ve 0 filas
+  ├─ Seguridad de PDFs (HTTP):
+  │   ├─ Cliente puede descargar PDFs de SUS documentos
+  │   └─ Cliente NO puede descargar PDFs de documentos AJENOS
+  └─ Flujo de password:
+      ├─ Cliente con password_changed_at null → redirige a /clientes/cambiar-password
+      ├─ Cliente puede cambiar password y luego entra al dashboard
+      └─ Auth::guard('cliente')->check() funciona con el nuevo guard
+
+  Los 16 tests originales se REEMPLAZAN, no se conservan (cambia el modelo
+  autenticable y el guard). Total esperado: ~18-20 tests.
+
+[OK] 15. Verificación final
+------------------------------------------------------
+  ├─ vendor/bin/pint --dirty --format agent                  → passed
+  ├─ php artisan test --compact --filter=Portal              → pasan los nuevos
+  ├─ php artisan test --compact                              → regresión
+  │   (375 existentes — los 16 del portal se reemplazan — ~18-20 nuevos)
+  ├─ Grep regresión:
+  │   ├─ Select-String 'Authenticatable' app/Models/Cliente.php → 1 resultado
+  │   ├─ Select-String "'cliente'" config/auth.php             → 2 resultados
+  │   │   (guards + passwords)
+  │   ├─ Select-String 'user_id_portal' app/                   → solo en migración
+  │   │   y comentarios (no debe quedar uso activo en modelos/filament)
+  │   └─ NO debe haber password plano en Log::* o dd()/dump()
+  └─ Manual:
+      ├─ Ejecutar migración: php artisan migrate (manual del usuario)
+      ├─ Ejecutar seeder: php artisan db:seed --class=ClientesPortalSeeder
+      ├─ php artisan serve en /admin y /clientes
+      ├─ Login con uno de los 2 clientes en /clientes (password temporal del email)
+      ├─ Verificar redirect a /clientes/cambiar-password
+      ├─ Cambiar password, entrar al dashboard
+      ├─ Ver 3 tablas (Facturas, Remisiones, Cotizaciones) filtradas por cliente_id
+      ├─ Probar descarga de PDF de un documento propio
+      └─ Probar staff-que-compra: si joseforozco@gmail.com tiene cliente vinculado,
+        |  el cliente debe tener su propia cuenta portal (email puede coincidir
+        |  o no, son autenticaciones independientes)
+
+RESUMEN
+===============================================================================
+  Completadas : Notas Créd/Débito, Optimización Hardware, Mantenimiento Estructural
+                Generación de PDFs (Tarea 4), Refactorización Z8 (Tarea 5),
+                Audit BD/Modelo/Filament (Tarea 6), Portal de Clientes (Tarea 7),
+                Migración del portal a Cliente Authenticatable (Tarea 8),
+                Validación de Congruencia BD/Migraciones/Seeders/Modelos/Recursos (Tarea 10)
+  En curso    : —
+  Prioritaria : —
+  Refactoriz. : —
+  Audit       : —
+  Diferidas   : Permisos (ver Tasklist-futuras.txt)
+  Futuras     : Ubicaciones, UX, Concurrencia, etc. (ver Tasklist-futuras.txt)
+  Post-proy.  : Multitenant (ver Tasklist-futuras.txt)
+  Tests       : 439 passed, 2 skipped, 4 failed (941 assertions)
+===============================================================================
+Tarea 9 - MEJORAS UX PORTAL CLIENTES (2026-06-07)
+==============================================================================
+
+[OK] 9.01 — Limpieza formulario de edición admin
+------------------------------------------------------
+  - Quitar `ViewAction` del header de EditCliente (redundante).
+  - Quitar acción `desactivar` del listview (redundante con delete).
+  - Quitar sección "Estado" del form de ClienteResource
+    (siempre ACTIVO al crear; portal_acceso default siempre ACTIVO).
+  - Fortalecer condiciones de DeleteAction: verificar
+    ventas, pagos, cotizaciones, remisiones, devoluciones,
+    notas, movimientos de saldo (no permitir delete si hay
+    historial).
+
+[OK] 9.02 — Auto-generación de acceso al portal en CreateCliente
+------------------------------------------------------
+  - Default `portal_acceso = ACTIVO` al crear cliente.
+  - `afterCreate` genera password temporal + envía email
+    automáticamente (vía PortalAccesoService).
+  - Email placeholder 'no_tiene_correo@correo.com' NO envía
+    email pero sí activa portal (warning al admin).
+
+[OK] 9.03 — EditarPerfil del cliente (Mi Perfil)
+------------------------------------------------------
+  - Nueva página /clientes/editar-perfil con schema
+    compartido (ClienteForm::configure scope=cliente).
+  - Mass-assignment defense: array_intersect_key con
+    camposEditables(scope=cliente) en save().
+  - No permite editar documento, email, estado, portal_acceso,
+    crédito, saldo (admin-only).
+
+[OK] 9.04 — Quitar campo `pais` del form
+------------------------------------------------------
+  - 100% colombiano, no es necesario mostrar el campo.
+  - Quitar TextInput::make('pais') del form de ClienteResource
+    Y del ClienteForm (scope=cliente y scope=admin).
+  - Default 'Colombia' en el modelo Cliente via mutator/cast
+    o atributo protegido $attributes.
+  - El campo queda en la BD para no romper datos legacy.
+  - Actualizar seeder de CLIENTES VARIOS (id=1): mantener
+    'pais' = 'Colombia'.
+
+[OK] 9.05 — Olvidaste tu contraseña en /clientes/login
+------------------------------------------------------
+  - Link "¿Olvidaste tu contraseña?" en la página de login
+    del portal (filament.clientes.pages.auth.login).
+  - Modal o página simple: input email.
+  - Backend: si existe Cliente con portal_acceso=ACTIVO y
+    email válido, genera password temporal y la envía
+    (reusar PortalAccesoService::generarYEnviarPassword).
+  - Respuesta genérica siempre (no revelar si el email existe
+    — seguridad).
+  - Rate limit por IP (5 intentos / 10 min) para evitar spam.
+  - Tests: cliente activo recibe email, cliente inexistente
+    recibe respuesta genérica, rate limit funcional.
+
+RESUMEN
+===============================================================================
+Completadas : Notas Créd/Débito, Optimización Hardware, Mantenimiento Estructural
+                 Generación de PDFs (Tarea 4), Refactorización Z8 (Tarea 5),
+                 Audit BD/Modelo/Filament (Tarea 6), Portal de Clientes (Tarea 7),
+                 Migración del portal a Cliente Authenticatable (Tarea 8),
+                  Mejoras UX Portal Clientes (Tarea 9 completa),
+                  Validación de Congruencia BD/Migraciones/Seeders/Modelos/Recursos (Tarea 10 completa)
+   En curso    : —
+   Refactoriz. : —
+   Audit       : —
+   Diferidas   : Permisos (ver Tasklist-futuras.txt)
+   Futuras     : Ubicaciones, UX, Concurrencia, etc. (ver Tasklist-futuras.txt)
+   Post-proy.  : Multitenant (ver Tasklist-futuras.txt)
+   Pendientes  : VILLAVICENCIO duplicada en BD (limpieza manual)
+   Tests       : 439 passed, 2 skipped, 4 failed (941 assertions)
+===============================================================================
+
+Tarea 10 — VALIDACIÓN DE CONGRUENCIA BD ↔ MIGRACIONES ↔ SEEDERS ↔ MODELOS ↔ RELACIONES ↔ RECURSOS
+===============================================================================
+  Objetivo: Verificar que todas las capas estén alineadas y proponer ajustes.
+  Orden de validación:
+  1. DB actual vs Migraciones (comparar schema real con archivos de migración)
+  2. Migraciones -> Seeders (cobertura de datos iniciales)
+  3. Migraciones -> Modelos (casts, fillable, relaciones, enums)
+  4. Modelos -> Relaciones (FK, belongsTo, hasMany, morphs)
+  5. Modelos -> Recursos Filament (Forms, Tables, Actions, Infolists)
+
+[OK] 01. DB vs Migraciones
+------------------------------------------------------
+  Comparar schema real (59 tablas) con archivos en database/migrations/
+  Herramientas: laravel-boost_database-schema + lectura migraciones
+
+[OK] 02. Migraciones -> Seeders
+------------------------------------------------------
+  Verificar que cada tabla con datos requeridos tenga seeder correspondiente
+  Revisar DatabaseSeeder.php orden de ejecución y FKs
+
+[OK] 03. Migraciones -> Modelos
+------------------------------------------------------
+  - $fillable coincide con columnas no-auto (excluyendo id, timestamps, FKs)
+  - $casts para enums, boolean, decimales, fechas, json
+  - Relaciones BelongsTo/HasMany definidas para cada FK
+  - Enums PHP existen para cada enum MySQL
+
+[OK] 04. Modelos -> Relaciones
+------------------------------------------------------
+  - Inversas definidas (both sides)
+  - onDelete/onUpdate en migraciones coinciden con lógica de negocio
+  - Relaciones polimórficas si aplica
+
+[OK] 05. Modelos -> Recursos Filament
+------------------------------------------------------
+  - Form fields cubren $fillable relevante
+  - Table columns muestran datos útiles
+  - Actions respetan estados/enums (compare ->value)
+  - Infolists completas para View pages
+
+[OK] 06. Users: eliminar tipo 'cliente' innecesario
+------------------------------------------------------
+  - Tabla users ya no necesita soportar clientes (ahora Cliente es Authenticatable)
+  - Revisar User::canAccessPanel, roles, seeders, tests
+  - Limpiar UserSeeder, RoleSeeder si creaban usuario 'cliente'
+
+[OK] 07. Informe consolidado y ajustes propuestos
+------------------------------------------------------
+  Documentar hallazgos y crear migraciones/fixes necesarios
+
+===============================================================================
+Tarea 11 — LOGIN CON GOOGLE OAUTH (SOCIALITE)
+===============================================================================
+  Idea suelta: permitir inicio de sesión con Google tanto en el panel
+  /admin (staff) como en /clientes (portal).
+
+[--] 01. Instalar Laravel Socialite
+------------------------------------------------------
+  composer require laravel/socialite
+  Agregar proveedor en bootstrap/providers.php
+
+[--] 02. Configurar credenciales Google
+------------------------------------------------------
+  - config/services.php: 'google' => [client_id, client_secret, redirect]
+  - Variables en .env: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI (diferente para admin y clientes)
+
+[--] 03. Ruta OAuth para panel /admin
+------------------------------------------------------
+  Controlador: app/Http/Controllers/Auth/SocialiteController.php
+  ├─ redirectToGoogle(): redirige a Socialite::driver('google')->redirect()
+  └─ handleGoogleCallback():
+      ├─ Buscar User por email
+      ├─ Si existe → login (Auth::guard('web'))
+      ├─ Si no existe → crear User con rol 'auxiliar' (o rechazar según política)
+      └─ Redirigir al dashboard /admin
+
+[--] 04. Ruta OAuth para portal /clientes
+------------------------------------------------------
+  Mismo controlador pero con guard='cliente' y modelo Cliente:
+  ├─ Buscar Cliente por email
+  ├─ Si existe y tiene portal_acceso=ACTIVO → login (Auth::guard('cliente'))
+  ├─ Si no existe o sin acceso → mensaje "No tienes acceso al portal"
+  └─ Redirigir a /clientes
+
+[--] 05. Botón "Ingresar con Google" en login de /admin
+------------------------------------------------------
+  app/Filament/Pages/Auth/Login.php (admin):
+  ├─ Agregar botón debajo del form estándar
+  ├─ Icono de Google (Heroicon o SVG inline)
+  └─ href → route('auth.google.redirect', ['panel' => 'admin'])
+
+[--] 06. Botón "Ingresar con Google" en login de /clientes
+------------------------------------------------------
+  app/Filament/Cliente/Pages/Auth/Login.php:
+  ├─ Mismo botón que admin pero apuntando a ruta con panel=clientes
+  └─ Visible solo si el Cliente existe y tiene portal_acceso=ACTIVO
+
+[--] 07. Edge cases y seguridad
+------------------------------------------------------
+  ├─ Email ya registrado en users pero no vinculado a Google → login normal
+  ├─ Email ya registrado en clientes pero sin portal_acceso → rechazar
+  ├─ Rate limit en redirect (5 intentos/minuto por IP)
+  ├─ State parameter (Socialite lo maneja por defecto, CSRF implícito)
+  └─ Log de intentos fallidos de OAuth
+
+[--] 08. Tests
+------------------------------------------------------
+  ├─ Socialite fake: mockear Socialite::driver('google')->user()
+  ├─ test: usuario existente loguea con Google (admin)
+  ├─ test: usuario existente loguea con Google (clientes)
+  ├─ test: email no registrado → redirige con error (admin)
+  ├─ test: email no registrado → redirige con error (clientes)
+  └─ test: rate limit funcional
+
+===============================================================================
+FIN TASKLIST
+===============================================================================

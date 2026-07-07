@@ -1,0 +1,32 @@
+===============================================================================
+               TASKLIST REPORTES Y WIDGETS — SigaInv
+               Organizado por Funcionalidad
+===============================================================================
+
+CONVENCIONES:
+  [OK] Completado y verificado
+  [!]  Pendiente Urgente / Prioritario
+  [~]  En desarrollo / Parcial
+  [--] Diferido / Futuro
+  [X]  Descartado o Reemplazado
+
+===============================================================================
+Reporte 1 — INVENTARIO POR MARCA/CATEGORÍA
+===============================================================================
+
+[--] 01. Definir estructura del reporte
+------------------------------------------------------
+      Columnas: Marca/Categoría, # Productos, Stock Total,
+      Valor Costo (cant × costo_promedio), Valor Venta (cant × precio_venta).
+      Selector de bodega (opción "Todas").
+
+[--] 02. Implementar página Filament con tabla + filtros
+------------------------------------------------------
+
+[--] 03. Exportación Excel
+------------------------------------------------------
+
+===============================================================================
+Reporte 2 — [PENDIENTE DEFINIR]
+===============================================================================
+

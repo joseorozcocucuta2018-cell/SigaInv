@@ -1,0 +1,101 @@
+===============================================================================
+               TASKLIST-FUTURAS SIGAINV — Mayo 2026
+               Implementaciones y mejoras futuras
+===============================================================================
+
+CONVENCIONES:
+  [OK] Completado y verificado
+  [!]  Pendiente Urgente / Prioritario
+  [~]  En desarrollo / Parcial
+  [--] Diferido / Futuro
+  [X]  Descartado o Reemplazado
+
+===============================================================================
+[--] Tarea 1 — UBICACIONES AVANZADAS (Post-Planificación)
+===============================================================================
+
+  [--] 01. Ubicaciones Avanzadas
+  ------------------------------------------------------
+       Nomenclatura jerárquica (Zona-Pasillo-Estante-Nivel),
+       rotación ABC, peso, ruta de picking, ubicaciones virtuales.
+
+===============================================================================
+[--] Tarea 2 — UX Y MAESTROS (Post-Planificación)
+===============================================================================
+
+  [--] 01. UX y Maestros
+  ------------------------------------------------------
+       Catálogo CIIU DIAN, liquidaciones/precios masivos con vigencia.
+
+===============================================================================
+[--] Tarea 3 — CONTROL DE CONCURRENCIA (Post-Planificación)
+===============================================================================
+
+  [--] 01. Control de Concurrencia
+  ------------------------------------------------------
+       Sistema de locks para documentos abiertos,
+       restricción de edición simultánea, liberación por inactividad.
+
+===============================================================================
+[--] Tarea 4 — AUTOGUARDADO PREVENTIVO (Post-Planificación)
+===============================================================================
+
+  [--] 01. Autoguardado Preventivo
+  ------------------------------------------------------
+       Detector de inactividad con Alpine.js,
+       guardado de borrador vía Livewire antes del logout.
+
+===============================================================================
+[--] Tarea 5 — CUENTAS INTERNACIONALES (Post-Planificación)
+===============================================================================
+
+  [--] 01. Cuentas Internacionales
+  ------------------------------------------------------
+       Toggle multi-moneda en empresa,
+       campos moneda/codigo_swift en bancos.
+
+===============================================================================
+[--] Tarea 6 — TARJETAS CRÉDITO CORPORATIVAS (Post-Planificación)
+===============================================================================
+
+  [--] 01. Tarjetas Crédito Corporativas
+  ------------------------------------------------------
+       Tipo cuenta pasivo con límite, fecha corte/pago,
+       consumo (aumenta deuda) y pago (disminuye deuda).
+
+===============================================================================
+[--] Tarea 7 — FACTUS (FACTURACIÓN ELECTRÓNICA)
+===============================================================================
+
+  [--] 01. Factus — Facturación Electrónica
+  ------------------------------------------------------
+       Integrar API Factus para envío de facturas a DIAN,
+       recepción de respuesta (cude, xml, pdf),
+       notas crédito/débito electrónicas.
+
+===============================================================================
+[--] Tarea 8 — VISIBILIDAD CONDICIONAL VENTAS
+===============================================================================
+
+  [--] 01. Visibilidad Condicional Ventas
+  ------------------------------------------------------
+       Ocultar módulo Ventas si no hay numeración activa
+       o empresa no es responsable de IVA.
+
+===============================================================================
+[--] Tarea X — MULTITENANT (POST-PROYECTO EN ANÁLISIS)
+===============================================================================
+
+  [--] 01. Multitenant
+  ------------------------------------------------------
+       Evaluar viabilidad de convertir a multi-tenant
+       (single-DB + empresa_id + Global Scopes + subdominio).
+       No programado — se analizará al completar el proyecto.
+
+RESUMEN
+===============================================================================
+  Archivo   : contexto/Tasklists/Tasklist.txt (tareas activas y en curso)
+  Referencia: Ver Tasklist.txt para seguimiento de tareas prioritarias
+===============================================================================
+FIN TASKLIST-FUTURAS
+===============================================================================

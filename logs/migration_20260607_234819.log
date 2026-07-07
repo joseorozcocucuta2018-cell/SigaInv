@@ -1,0 +1,40 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-06-07 23:48:19
+ Entorno   : local
+ Directorio: F:\www\web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------
+
+
+   Illuminate\Database\QueryException 
+
+  SQLSTATE[HY000] [2002] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión (Connection: mysql, Host: localhost, Port: 3306, Database: sigainv, SQL: select exists (select 1 from information_schema.tables where table_schema = schema() and table_name = 'migrations' and table_type in ('BASE TABLE', 'SYSTEM VERSIONED')) as `exists`)
+
+  at vendor\laravel\framework\src\Illuminate\Database\Connection.php:841
+    837▕             $exceptionType = ($isUniqueConstraintError = $this->isUniqueConstraintError($e))
+    838▕                 ? UniqueConstraintViolationException::class
+    839▕                 : QueryException::class;
+    840▕ 
+  ➜ 841▕             $exception = new $exceptionType(
+    842▕                 $this->getNameWithReadWriteType(),
+    843▕                 $query,
+    844▕                 $this->prepareBindings($bindings),
+    845▕                 $e,
+
+  1   vendor\laravel\framework\src\Illuminate\Database\Connectors\Connector.php:67
+      PDOException::("SQLSTATE[HY000] [2002] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión")
+
+  2   vendor\laravel\framework\src\Illuminate\Database\Connectors\Connector.php:67
+      PDO::connect("mysql:host=localhost;port=3306;dbname=sigainv", "root", Object(SensitiveParameterValue), [])
+
+----------------------------------------
+ ExitCode  : 1 (FALLO)
+ Duracion  : 11,70s
+ Log       : F:\www\web\sigaInv\logs\migration_20260607_234819.log
+========================================

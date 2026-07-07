@@ -1,0 +1,876 @@
+===============================================================================
+SESION 46 — 2026-05-19 — DEVOLUCIONES DDD + ENUMS + AWS S3 + IMPRIMIBLES
+===============================================================================
+
+OBJETIVO:
+  Refactorizar módulo Devoluciones siguiendo DDD (lógica en Services,
+  models thin). Agregar enums faltantes. Soporte AWS S3. Mejorar imprimibles.
+
+--- DEVOLUCIONES — DDD REFACTORIZACION -----------------------------------------
+
+  DevolucionService (NUEVA LÓGICA):
+    - procesarConfirmacion(Devolucion): restaura stock, ajusta saldo cliente,
+      crea MovimientoInventario (tipo entrada_devolucion), crea
+      MovimientoSaldoCliente, notifica admins
+    - anular(Devolucion, ?string): revierte stock, restaura saldo,
+      crea movimientos de anulación, notifica admins
+    - Toda la lógica de negocio migrada desde Devolucion::procesarDevolucion()
+      y Devolucion::anular()
+
+  Devolucion Model (ADELGAZADO):
+    - Eliminados: procesarDevolucion(), getBodyegaDeDocumento(), anular()
+    - updating hook: delega en DevolucionService::procesarConfirmacion()
+    - Flag skipProcessing: evita doble procesamiento cuando Service actualiza estado
+    - +confirmada_en en fillable
+    - Imports limpios: solo relaciones y casts
+
+  Nuevos Enums:
+    - DevolucionMotivo: CAMBIO, DEFECTO, ERROR_PEDIDO, OTRO (label, color)
+    - DevolucionTipoDocumento: VENTA, REMISION (label, color)
+    - TransformacionLineaTipo: INSUMO, PRODUCTO (label, color)
+
+  DevolucionesTable:
+    - Columnas con enums: motivo, tipo_documento
+    - Badges con color() desde enums
+
+  DevolucionForm:
+    - Select para motivo (DevolucionMotivo enum)
+    - Select para tipo_documento (DevolucionTipoDocumento enum)
+
+  ConfirmarDevolucion / AnularDevolucion Actions:
+    - Delegan en DevolucionService
+
+--- CAJAS ----------------------------------------------------------------------
+
+  CajaResource: getNavigationBadge sin filtros
+  CajasTable: ajustes menores
+  Caja Model: +nuevos métodos/scopes
+
+--- TRANSFORMACIONES -----------------------------------------------------------
+
+  TransformacionForm: ajustes de layout y validación
+  TransformacionTable: columna tipo_linea con enum TransformacionLineaTipo
+
+--- TRASLADOS ------------------------------------------------------------------
+
+  AnularTraslado: ajustes de validación
+
+--- VENTAS ---------------------------------------------------------------------
+
+  AnularVenta: ajustes de flujo
+  MarcarPagada: ajustes de formato monetario
+
+--- IMPRIMIBLES Y EMAIL --------------------------------------------------------
+
+  imprimir/layout.blade.php (NUEVO): layout base para imprimibles
+  imprimir/documento.blade.php: refactorizado, usa layout base
+  emails/documento.blade.php: ajustes menores
+  DocumentoPdfMail: simplificado
+  pdf/documento.blade.php: ajustes menores
+
+--- DEPENDENCIAS ---------------------------------------------------------------
+
+  composer.json: +league/flysystem-aws-s3-v3 ^3.34 (soporte S3)
+  config/excel.php: ajuste menor
+
+--- VERSION ---------------------------------------------------------------------
+   v3.14.4 -> v3.15.0  (devoluciones DDD + enums + AWS S3 + imprimibles)
+
+===============================================================================
+FIN SESION 46
+===============================================================================
+
+===============================================================================
+SESION 47 — 2026-05-20 — LOGOS POR FORMATO + S3 CONDICIONAL + AUTO-LOGOUT ES
+===============================================================================
+
+OBJETIVO:
+  Permitir logos diferenciados por formato (panel, POS, impresión, email).
+  Configurar disco S3 condicional para Laravel Cloud. Traducir auto-logout.
+
+--- LOGOS POR FORMATO ----------------------------------------------------------
+
+  Tabla empresa — Nuevos campos:
+    - logo_pos: Logo tickets POS (80mm térmico, monocromo compacto)
+    - logo_impresion: Logo PDFs (carta/media carta — facturas, kardex, listados)
+    - logo_email_url: URL absoluta para emails HTML (opcional)
+
+  Migración:
+    - 0001_01_01_000008_create_empresa_table.php (unificada)
+    - 2026_05_20_000001_add_logos_formatos_empresa_table.php (ADD — ejecutar)
+
+  Empresa Model:
+    - +logo_pos, +logo_impresion, +logo_email_url en $fillable
+
+  EmpresaForm:
+    - Sección "Documentos y Logo" con 4 campos:
+      logo panel, logo impresión, logo POS, URL logo email
+    - FileUpload con disk('directo'), directory('empresa'), visibility('public')
+
+  Vistas PDF — Cascada logo_impresion → logo → fallback iniciales:
+    - pdf/documento.blade.php
+    - pdf/kardex.blade.php
+    - pdf/listado.blade.php
+    - pdf/conteo.blade.php
+
+  DocumentoPdfMail:
+    - Cascada: logo_email_url → logo_impresion → logo → fallback
+
+  EmpresasTable:
+    - +columnas ImageColumn para logo, logo_impresion, logo_pos
+    - +TextColumn toggleable para logo_email_url
+
+--- FILESYSTEM S3 CONDICIONAL -------------------------------------------------
+
+  config/filesystems.php:
+    - Disco 'directo': resuelve a S3 en producción, local en desarrollo
+    - Disco 's3' agregado con configuración estándar
+    - En Laravel Cloud: FILESYSTEM_DISK=public → directo usa S3
+    - En Laragon/Hostinger: FILESYSTEM_DISK=directo → local
+
+--- AUTO-LOGOUT ESPAÑOL --------------------------------------------------------
+
+  AdminPanelProvider / ClientePanelProvider:
+    - AutoLogoutPlugin::make()->timeLeftText('Tiempo restante:')
+    - Plugin ya incluye traducción es/ (notification.title, notification.body, units)
+
+--- VERSION --------------------------------------------------------------------
+   v3.15.0 -> v3.16.0  (logos por formato + S3 condicional + auto-logout ES)
+
+===============================================================================
+FIN SESION 47
+===============================================================================
+
+===============================================================================
+SESION 48 — 2026-05-20 — FIX DISCO DIRECTO CLOUD + ELIMINA LOGO_EMAIL_URL
+===============================================================================
+
+OBJETIVO:
+  Corregir error de carga en Laravel Cloud causado por disco 'directo'
+  que usaba variables AWS_* no inyectadas por Laravel Cloud.
+  Simplificar logos eliminando campo logo_email_url redundante.
+
+--- FIX DISCO DIRECTO ----------------------------------------------------------
+
+  Problema:
+    - 'directo' intentaba usar env('AWS_ACCESS_KEY_ID'), env('AWS_BUCKET'), etc.
+    - Laravel Cloud NO inyecta variables AWS_* individuales
+    - Inyecta LARAVEL_CLOUD_DISK_CONFIG con disco 'sigaInv' (Cloudflare R2)
+    - Resultado: error al cargar página en producción
+
+  Solución:
+    - config/filesystems.php: 'directo' simplificado a solo 'local' (desarrollo)
+    - AppServiceProvider::boot(): en producción, sobrescribe 'directo' con
+      la config del disco 'sigaInv' que Laravel Cloud inyecta automáticamente
+    - Eliminado disco 's3' hardcodeado de filesystems.php
+
+  AppServiceProvider.php:
+    - if (production) → config(['filesystems.disks.directo' => $cloudDisk])
+    - $cloudDisk = config('filesystems.disks.sigaInv')
+
+--- ELIMINA LOGO_EMAIL_URL -----------------------------------------------------
+
+  Racional:
+    - Con disco 'directo' apuntando a R2 en producción, Storage::url()
+      genera URLs CDN permanentes automáticamente
+    - Campo logo_email_url (URL manual) queda redundante
+
+  Cambios:
+    - Migración 0001_01_01_000008: eliminada línea logo_email_url
+    - Migración ADD 2026_05_20_000002: dropColumn('logo_email_url')
+    - Empresa Model: eliminado de $fillable
+    - EmpresaForm: eliminado campo TextInput
+    - EmpresasTable: eliminada columna TextColumn
+    - DocumentoPdfMail: cascada simplificada a logo_impresion → logo
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.0 -> v3.16.1  (fix disco directo cloud + elimina logo_email_url)
+
+===============================================================================
+FIN SESION 48
+===============================================================================
+
+===============================================================================
+SESION 49 — 2026-05-20 — PASO Z: FIX DISCO DIRECTO + TESTS + PINT
+===============================================================================
+
+OBJETIVO:
+  Corregir error de carga en Laravel Cloud (disco directo).
+  Ejecutar Paso Z: corregir tests, configurar Pint strict_types.
+
+--- FIX DISCO DIRECTO (RE-APLICADO) --------------------------------------------
+
+  Problema: disco 'directo' usaba variables AWS_* no inyectadas por Laravel Cloud.
+  Solución: AppServiceProvider sobrescribe 'directo' con config de 'sigaInv' en producción.
+
+  Cambios:
+    - config/filesystems.php: eliminado disco 's3' hardcodeado, 'directo' → solo local
+    - AppServiceProvider.php: alias cloud en producción
+    - Migración 2026_05_20_000002: dropColumn con hasColumn check (SQLite safe)
+    - Eliminados: logo_email_url de migración, modelo, form, table, mail
+
+--- Z2 — TESTS CORREGIDOS ------------------------------------------------------
+
+  PagoClienteObserver: agregado hook created() para distribuir pago
+  TransformacionServiceTest: 'Auto:' → 'AUTO:' (SanitizesAttributes uppercases)
+  TransformacionResourceTest: con_formula=true en productoFinal, formula nullable
+  FormulaTransformacionResourceTest: nombres en mayúsculas, activo toggle, codigo field
+  ResourceSmokeTest: Traslados requiere 2 bodegas
+
+  Resultado: 333 passed, 0 failed (679 assertions)
+
+--- Z4 — PINT CONFIGURADO ------------------------------------------------------
+
+  pint.json: preset laravel (strict_types removido — rompe tests en SQLite :memory:)
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.1 -> v3.16.2  (fix disco directo cloud + tests corregidos + pint)
+
+===============================================================================
+FIN SESION 49
+===============================================================================
+
+===============================================================================
+SESION 50 — 2026-05-20 — PASO Z: REFACTORIZACIÓN REDUNDANCIA + FORMATO MONEDA
+===============================================================================
+
+OBJETIVO:
+  Ejecutar PASO Z de mantenimiento estructural. Eliminar código redundante
+  en models, actions, pages y forms. Unificar formato monetario a $5.000.000,00.
+
+--- TRAIT: HasAutoNumbering (5 models) -----------------------------------------
+
+  Creado app/Traits/HasAutoNumbering.php:
+    - Centraliza lógica de auto-numeración secuencial
+    - Soporta substr offset (PAG-, RC-, CNT-, AJU-) y explode (DVL-)
+    - Propiedades configurables: $autoNumberPrefix, $autoNumberOffset,
+      $autoNumberUseLastSegment, $autoNumberPadLength
+
+  Models refactorizados:
+    - PagoProveedor: usa HasAutoNumbering (prefix: PAG-, offset: 4)
+    - PagoCliente: usa HasAutoNumbering (prefix: RC-, offset: 3)
+    - ConteoFisico: usa HasAutoNumbering (prefix: CNT-, offset: 4)
+    - AjusteInventario: usa HasAutoNumbering (prefix: AJU-, offset: 4)
+    - Devolucion: usa HasAutoNumbering (prefix: DVL-, useLastSegment: true)
+
+  Eliminados ~35 líneas de código duplicado (booted/creating hooks).
+
+--- TRAIT: HasNavigationBadgeColor (29 resources) ------------------------------
+
+  Creado app/Traits/HasNavigationBadgeColor.php:
+    - getNavigationBadgeColor(): 'success' si existen registros, 'danger' si no
+
+  Aplicado a 29 Filament Resources (EmpresaResource excluido por requerimiento).
+
+--- TRAIT: ValidatesEditableState (3 Edit pages) --------------------------------
+
+  Creado app/Traits/ValidatesEditableState.php:
+    - beforeSave() valida isEditable() del enum estado
+    - Mensaje dinámico usando getModelLabel()
+
+  Aplicado a:
+    - EditVenta, EditRemision, EditCompra
+
+--- TRAIT: SendsDocumentEmail (3 Edit pages) -----------------------------------
+
+  Creado app/Traits/SendsDocumentEmail.php:
+    - makeEnviarCorreoAction(tipo, relations, afterSend?)
+    - Soporta callback post-envío (CotizacionService::cambiarEstado)
+
+  Aplicado a:
+    - EditVenta, EditRemision, EditCotizacion
+
+--- TRAIT: CreatesDocumentActions (4 Edit pages) --------------------------------
+
+  Creado app/Traits/CreatesDocumentActions.php:
+    - makeConfirmarAction(entity, service, estadoBorrador, ...)
+    - makeAnularAction(entity, service, estadoAnulable, requiresReason?)
+    - Helper article() e isFeminine() para mensajes en español
+
+  Aplicado a:
+    - EditVenta (confirmar + anular con razón)
+    - EditRemision (confirmar + anular con razón)
+    - EditCompra (anular con razón)
+    - EditDevolucion (confirmar + anular con razón)
+
+--- FORMATO MONETARIO UNIFICADO ------------------------------------------------
+
+  AppServiceProvider.php:
+    - TextInput::configureUsing() aplica currencyMask SOLO a campos monetarios
+      (precio, costo, monto, valor, total, subtotal, impuesto, descuento, etc.)
+    - Excluye explícitamente campos con 'porcentaje' o 'tasa'
+    - precision: 2 → formato $50.000,00 en formularios
+
+  Macro currency (TextColumn/TextEntry):
+    - Reemplazado akaunting/money → number_format nativo
+    - Formato: $5.000.000,00 (signo $, punto miles, coma decimales)
+
+  Reemplazados 60+ llamadas:
+    - ->money('COP', divideBy: 1) → ->currency()
+    - ->currency('COP') → ->currency()
+    - Aplicado en 30+ archivos: Tables, Infolists, Widgets, Pages
+
+  Eliminados 53 ->currencyMask() explícitos de formularios (ahora global).
+
+--- FIX: Login bloqueado -------------------------------------------------------
+
+  Problema: currencyMask global aplicaba a todos los TextInput (login, email).
+  Solución: whitelist de campos monetarios + exclusión de porcentajes.
+
+--- TESTS ----------------------------------------------------------------------
+
+  Resultado: 333 passed, 0 failed (679 assertions)
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.2 -> v3.16.3  (PASO Z: traits, formato moneda $X.XXX,XX, tests OK)
+
+===============================================================================
+FIN SESION 50
+===============================================================================
+
+
+===============================================================================
+SESION 51 — 2026-05-22 — COMPRAS: UI, PAGOS, REVERSAR, RECORDATORIOS
+===============================================================================
+
+OBJETIVO: Ajustes en compras, bodegas, empresa, movimientos bancos/caja,
+          renombrar Anular→Reversar en documentos, recordatorios vencimiento.
+
+--- 1. BODEGAS: ocultar botón Nuevo si una_sola_bodega -----------------------
+
+  BodegaResource::canCreate() → bloquea si Empresa::usaUnaSolaBodega()
+  ListBodegas::getHeaderActions() → condicionado, retorna [] si una sola bodega
+
+--- 2. EMPRESA: UI ajustes -----------------------------------------------------
+
+  EmpresaForm:
+    - Toggle "una_sola_bodega" → columnSpanFull()
+    - nombre_comercial + razon_social: ambos visibles (sin cambios)
+
+  EmpresasTable:
+    - Columna: nombre_comercial (label "Nombre Comercial / Razón Social")
+    - Eliminada descripción redundante de razon_social
+
+  EmpresaInfolist (NUEVO):
+    - Vista detalle: solo nombre_comercial, oculta razon_social
+    - Secciones: Identificación, Ubicación, Tributaria
+    - Registrado en EmpresaResource::infolist()
+
+--- 3. MOVIMIENTOS CAJA/BANCOS: visibilidad destino, quitar categoría bancos ---
+
+  MovimientoCajasTable: columna Destino sin visibleFrom('md') → siempre visible
+  MovimientoBancosTable: igual + eliminada columna Categoría
+  MovimientoBancoForm: eliminado campo Select categoria (no existe en DB)
+
+--- 4. COMPRAS: crédito proveedor, filtro productos, duplicados ---------------
+
+  CompraForm:
+    - FIX: use App\Models\Empresa faltante (rompía create)
+    - Eliminada sección "Crédito del Proveedor" (no usan cupos)
+    - Selector productos: ->whereIn('tipo_producto', ['comprado','materia_prima'])
+    - Anti-duplicados: ->distinct() + ->disableOptionsWhenSelectedInSiblingRepeaterItems()
+
+--- 5. COMPRAS: RegistrarPago solo visible post-confirmación -----------------
+
+  RegistrarPago:
+    - visible: solo REGISTRADA y PENDIENTE (excluye BORRADOR)
+    - Eliminado auto-registro implícito desde BORRADOR
+    - Comparaciones con ->value (convención enums)
+
+--- 6. DOCUMENTOS: Anular → Reversar (global) --------------------------------
+
+  CreatesDocumentActions (trait):
+    - makeAnularAction → makeReversarAction
+    - Etiquetas: Anular→Reversar, anulación→reversión
+    - Nuevo parámetro opcional ?Closure $visible
+
+  EditCompra: makeReversarAction con visible solo REGISTRADA
+  EditVenta, EditRemision, EditDevolucion: makeReversarAction (sin restricción extra)
+
+--- 7. RECORDATORIOS DE VENCIMIENTO PARA COMPRAS -----------------------------
+
+  CompraPorVencerNotification (NUEVO): database, warning, 3 días antes
+  CompraVencidaNotification (NUEVO): database, danger, hoy o mora >7 días
+
+  EnviarRecordatoriosFacturas: nuevo bloque compras
+    - Filtra REGISTRADA/PENDIENTE con saldo_pendiente>0 y fecha_vencimiento
+    - Cache anti-duplicados 20h
+    - Notificación database a admin+contador
+
+--- VERSION --------------------------------------------------------------------
+    v3.16.3 -> v3.16.4  (compras UI, reversar, recordatorios vencimiento)
+
+================================================================================
+SESION 52 — 2026-05-26 — REORGANIZACIÓN TASKLISTS + PLAN PDF (laravel-mpdf)
+================================================================================
+
+OBJETIVO:
+  Reorganizar tasklists: separar futuras implementaciones en archivo propio.
+  Crear plan detallado para integración de mccarlosen/laravel-mpdf (PDFs en Carta).
+
+--- REORGANIZACIÓN TASKLISTS ----------------------------------------------------
+
+  contexto/Tasklists/Tasklist.txt:
+    - Eliminadas Tarea 4 (Futuras Implementaciones) y Tarea X (Post-Proyecto)
+    - Nueva Tarea 4: Plan detallado de generación de PDFs con laravel-mpdf
+    - 10 ítems priorizados: servicio base, mailable, confirmación automática,
+      reenvío manual, vistas Blade, módulos (conteos/cotizaciones/ventas),
+      pruebas, dependencias
+    - Formato: Carta (216mm × 279mm), generación on-the-fly (no persistir)
+    - POS 80mm se mantiene exclusivo de sigaPOS (app independiente)
+
+  contexto/Tasklists/Tasklist-futuras.txt (NUEVO):
+    - Hereda Tarea 4 original (Ubicaciones, UX, Concurrencia, Autoguardado,
+      Cuentas Int, Tarjetas, Factus, Visibilidad Condicional) + Tarea X
+      (Multitenant)
+    - 8 tareas numeradas + Tarea X (post-proyecto)
+
+--- DECISIONES DE NEGOCIO (PLAN PDF) -------------------------------------------
+
+  Formato correo/archivo: Carta (216mm × 279mm), portrait
+  Formato POS: Exclusivo de sigaPOS (app vanilla JS en public/pos/)
+  Generación: On-the-fly (no persistir en servidor)
+  Envío automático: Al confirmar documento, si cliente tiene email registrado
+  Reenvío manual: Botón en vista "Ver" + Bulk Action en tabla
+  Correos sin PDF: Recordatorios de vencimiento (Notification) se quedan sin PDF
+  Logo: Incrustado en PDF como base64 desde Empresa.logo_impresion o Empresa.logo
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.4 -> v3.16.5  (reorganización tasklists + plan PDF laravel-mpdf)
+
+================================================================================
+FIN SESION 52
+=======
+
+===============================================================================
+SESION 53 — 2026-05-29 — TAREA 2: STRICT_TYPES + SQLITE + TYPEERRORS
+===============================================================================
+
+OBJETIVO:
+  Completar Z4 (declare strict_types) de la Tarea 2 (Mantenimiento Estructural).
+  Agregar declare(strict_types=1) a app/ y corregir TypeErrors expuestos.
+  Migrar SQLite de :memory: a archivo para eliminar falsos positivos.
+
+--- Z4 — DECLARE(STRICT_TYPES=1) EN APP/ ---------------------------------------
+
+  Aplicado declare(strict_types=1) a 414 archivos PHP en app/ (Services, Models,
+  Observers, Enums, Traits, Filament Resources, Policies, etc.)
+
+  TypeErrors corregidos (todos por retorno string de SQLite en columnas
+  DECIMAL/INT):
+
+  StockService.php:85-108:
+    - getAvailableStock(): (float) cast en $stock?->cantidad y $stockLote?->cantidad
+    - SQLite retorna string en decimal(15,4), strict_types requiere float
+
+  AjusteInventarioService.php:140-152:
+    - (float) cast en $detalle->diferencia (string de DB)
+    - abs() requiere int|float con strict_types
+
+  VentaService.php:170:
+    - (float) cast en $detalle->cantidad
+
+  RemisionService.php:141:
+    - (float) cast en $detalle->cantidad
+
+  ProductoObserver.php:32:
+    - (string) cast en $nextId (int de max('id')+1) para str_pad()
+
+  CreateTransformacion.php:41:
+    - (float) cast en cantidad_a_producir (string de DB) para
+      TransformacionService::applyFormulaToTransformacion()
+
+--- SQLITE: :MEMORY: → ARCHIVO --------------------------------------------------
+
+  phpunit.xml:
+    - DB_DATABASE cambiado de :memory: a database/testing.sqlite
+    - Elimina cascada de 193 falsos positivos PDOException por transacciones
+      anidadas compartidas en PHP 8.4 (RemisionVentaIntegrationTest corrompía
+      estado global de conexión)
+
+--- Z1 — MIGRACIÓN REDUNDANTE ELIMINADA ----------------------------------------
+
+  Eliminado archivo:
+    - database/migrations/2026_05_20_000002_drop_logo_email_url_from_empresa.php
+    - Columna logo_email_url ya no existe en la migración principal unificada
+
+--- Z2 — TESTS FORMULA TRANSFORMACION ------------------------------------------
+
+  FormulaTransformacionResourceTest:
+    - Usar producto_final_nombre (texto) en lugar de producto_final_id (select)
+    - 18/18 tests pasan
+
+--- Z6 — ENUM ->value -----------------------------------------------------------
+
+  Corregidas 17+ comparaciones Enum sin ->value en app/Filament/Resources/
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.5 -> v3.16.6  (strict_types, SQLite file, TypeErrors, Tarea 2 Z1-Z8)
+
+===============================================================================
+FIN SESION 53
+=======
+
+===============================================================================
+SESION 54 — 2026-05-29 — TAREA 2 COMPLETA: Z3/Z5/Z7/Z8 + PDF LAYOUT
+===============================================================================
+
+OBJETIVO:
+  Completar Tarea 2 (Mantenimiento Estructural): Z3, Z5, Z7, Z8.
+
+--- Z7 — HASNAVIGATIONBADGE TRAIT EN 33 RESOURCES -----------------------------
+
+  HasNavigationBadgeColor.php:
+    - Unificado: ahora también incluye getNavigationBadge() con (string) count
+    - Aplicado a 33 recursos Filament via script batch (import + use + removal)
+    - Eliminadas 33×6=198 líneas inline duplicadas (~165 líneas netas)
+
+--- Z3 — PUBLIC VIEWS DE PLUGINS -----------------------------------------------
+
+  Audit completed: 22 vendor directories, 193 files.
+  - Solo 1 view personalizada: filament-footer/footer.blade.php
+  - filament-tables views ya eliminadas (v3.9.2, correcto)
+  - Eliminados 3 .gitkeep huérfanos (filament-calculator, filament-character-counter,
+    filament-unsaved-changes-modal)
+
+--- Z5 — REFACTORIZAR VISTAS PDF CON LAYOUT BASE -----------------------------
+
+  resources/views/pdf/layout.blade.php (NUEVO):
+    - Logo loading centralizado (empresa.logo_impresion → empresa.logo → fallback iniciales)
+    - Company info header (nombre, NIT, dirección, teléfono, ciudad)
+    - Footer unificado con generación timestamp
+    - Secciones: @section('title'), @section('styles'), @section('header-right'),
+      @section('content'), @section('footer')
+
+  11 vistas refactorizadas:
+    - Category A (reportes, 7 views): cartera, inventario-valorizado,
+      productos-sin-movimiento, rentabilidad, reporte-compras, reporte-ventas,
+      ventas-vendedor — ~70% de reducción (eliminado HTML shell, header, footer,
+      logo logic, CSS común)
+    - Category B (documentos, 3 views): documento (306→238 líneas), listado,
+      conteo
+    - Category C: kardex (146→101 líneas)
+
+--- Z8 — AUDITAR CÓDIGO REDUNDANTE --------------------------------------------
+
+  - RedirectsToIndex.php: eliminado (trait no usado en ningún resource)
+  - Audit report generado: ~1.049 líneas redundantes identificadas
+    (form schemas: 264, action classes: 450, imprimir action: 25, QuickCreate: 20)
+  - Refactorizaciones mayores (form schemas, action classes) diferidas para
+    próxima sesión por alcance
+
+--- VERSION --------------------------------------------------------------------
+   v3.16.6 -> v3.16.7  (Tarea 2 completa: Z3/Z5/Z7/Z8, PDF layout, traits, cleanup)
+
+===============================================================================
+FIN SESION 54
+=======
+
+==========================================================================================
+SESION 55 — 2026-06-03 — ALINEACIÓN BD vs MIGRACIONES, ENUMS, MODELOS, FILAMENT
+==========================================================================================
+
+OBJETIVO:
+  Revisar y corregir todas las discrepancias entre BD real, migraciones, modelos,
+  seeders y recursos Filament tras cambios directos del usuario en BD.
+
+--- HALLAZGOS INICIALES -----------------------------------------------------------
+
+  Migraciones vs BD:
+    - turnos.bodega_id: bigint unsigned NOT NULL c/ FK → int nullable sin FK
+    - drop_logo_email_url_from_empresa.php: borrado del FS pero en tabla migrations
+      → recuperado de git
+
+  Modelos:
+    - 12 modelos sin fillables para columnas existentes
+    - 18+ modelos sin casts (enum, decimal, boolean, array, date)
+    - Auditoria.php: no existía (tabla presente)
+    - TransformacionDetalle: tabla con deleted_at sin SoftDeletes
+
+  Enums:
+    - 6 dominios sin enum: NotaTipo, NotaEstado, ProductoTipo,
+      MovimientoInventarioTipo, MovimientoSaldoClienteTipo, MovimientoCajaTipo,
+      NumeracionTipoDocumento, ImpuestoTipo
+    - Recursos Filament usaban arrays hardcodeados en vez de enums
+
+--- CORRECCIONES APLICADAS -------------------------------------------------------
+
+  1. Migración recuperada de git:
+     - 2026_05_20_000002_drop_logo_email_url_from_empresa.php
+
+  2. Creados 8 Enums:
+     - NotaTipo, NotaEstado, ProductoTipo, MovimientoInventarioTipo (22 casos),
+       MovimientoSaldoClienteTipo, MovimientoCajaTipo, NumeracionTipoDocumento,
+       ImpuestoTipo
+     - Cada uno con label(), color(), icon()
+
+  3. Modelos:
+     - Añadidos fillables faltantes en: Empresa, User, AjusteInventario, Compra,
+       Venta, Remision, Traslado, FormulaTransformacionDetalle, TransformacionDetalle
+     - Añadidos ~30 casts (enum, decimal, boolean, array, date) en 18 modelos
+     - Creado Auditoria.php (tabla existente sin modelo)
+     - SoftDeletes añadido a TransformacionDetalle
+     - Accessor getTieneTransformacionesAttribute → método tieneTransformaciones()
+       (accesor sobreescribía columna BD real)
+
+  4. Filament Resources (form/tables):
+     - MovimientoCaja, Nota, Producto, Impuesto, FormulaTransformacion, Numeracion,
+       MovimientoInventario, Empresa → usan enums en lugar de arrays hardcodeados
+
+  5. Tests:
+     - 17 tests fallaban por comparar raw strings vs objetos enum
+     - Corregidas 17+ comparaciones (->value)
+     - 333 tests pasan, 685 assertions
+
+  6. Seeders:
+     - FormulaTransformacionDetalleSeeder: corregido campo tipo_linea 'insumo'
+
+--- PENDIENTE PARA SIGUIENTE SESIÓN ----------------------------------------------
+
+  - Migración turnos.bodega_id no se ejecutó (la fixup se borró por error)
+  - Casts faltantes: estado_pago, tipo_documento, tipo_persona, regimen_tributario
+  - 18 Filament resources con enums hardcodeados pendientes
+  - AuditoriaOperacion enum no creado
+
+--- VERSION ----------------------------------------------------------------------
+   v3.16.7 -> v3.16.7  (cambios no versionados, pendiente commit)
+
+==========================================================================================
+FIN SESION 55
+=======
+
+==========================================================================================
+SESION 56 — 2026-06-03 — REVISIÓN POST-CAMBIOS DIRECTOS BD
+==========================================================================================
+
+OBJETIVO:
+  Revisar nuevamente BD vs migraciones/modelos/seeders/recursos tras nuevos cambios
+  directos del usuario.
+
+--- HALLAZGOS --------------------------------------------------------------------
+
+  BD vs Migraciones:
+    - Solo 1 discrepancia: turnos.bodega_id (int, nullable, sin FK)
+      → la fixup de la sesión anterior se borró sin ejecutarse
+    - Las otras 58 tablas coinciden perfectamente con sus migraciones
+
+  Modelos vs Schema:
+    - CASTS FALTANTES (HIGH):
+      * Venta/Remision.estado_pago → enum sin cast
+      * Cliente/Proveedor.tipo_documento → enum sin cast
+      * Empresa.tipo_persona, regimen_tributario → enum sin cast
+      * Auditoria.operacion → enum sin cast
+      * AjusteInventario.es_saldo_inicial → boolean
+      * Empresa.resolucion_fecha_* → date
+    - FormulaTransformacion.tiene_transformaciones en $casts pero no en $fillable
+
+  Filament Resources:
+    - 18 recursos con enums hardcodeados (VentaForm, CompraForm, ProductoForm,
+      TransformacionForm, DevolucionForm, PagoClienteForm, etc.)
+
+  Seeders:
+    - Sin errores de columnas vs BD
+    - NumeracionesSeeder referenciado pero no existe
+    - Ciudades mal asignadas en CundinamarcaSeeder, AntioquiaSeeder
+
+--- ACCIONES TOMADAS -------------------------------------------------------------
+
+  1. Creada migración 2026_06_03_060855_fix_turnos_bodega_id_type.php
+     - Corrige bodega_id a bigint unsigned NOT NULL con FK
+     - Pendiente de ejecución manual
+
+  2. Actualizado Contexto.txt con deuda técnica identificada
+
+--- PENDIENTE --------------------------------------------------------------------
+
+  - Ejecutar: php artisan migrate (turnos fix)
+  - Crear enums faltantes: EstadoPago, TipoDocumento, TipoPersona,
+    RegimenTributario, AuditoriaOperacion
+  - Añadir casts y fillables a modelos
+  - Corregir 18 recursos Filament con enums hardcodeados
+  - Ejecutar tests y Pint
+
+--- VERSION ----------------------------------------------------------------------
+   v3.16.7 (sin cambios de versión)
+
+==========================================================================================
+FIN SESION 56
+================================================================================================================================================================================================
+
+
+==========================================================================================
+SESION 57 — 2026-06-04 — AUDITORIA ENUMS: COMPLETAR PENDIENTES S55-S56
+==========================================================================================
+
+OBJETIVO:
+  Completar los pendientes de S55-S56: crear enums faltantes, añadir casts a modelos,
+  eliminar magic strings y arrays hardcodeados en recursos Filament. Audit general
+  del uso de enums en el proyecto.
+
+--- RESPUESTA A PREGUNTA: ¿ENUMS REQUIEREN CAMPOS ENUM EN MYSQL? ------------------
+
+  NO. Los BackedEnum de PHP son clases puras. La columna MySQL sigue siendo
+  varchar/string. El cast del modelo Eloquent (ej: 'estado_pago' => EstadoPagoEnum::class)
+  hace la conversión string ↔ enum automáticamente en lectura/escritura.
+  No se requieren migraciones para usar enums.
+
+--- ENUMS NUEVOS (3) --------------------------------------------------------------
+
+  app/Enums/EstadoPagoEnum.php:
+    - PENDIENTE, PARCIAL, PAGADO, ANULADA (label, color, icon)
+    - Casts: Venta::estado_pago, Remision::estado_pago
+
+  app/Enums/DocumentoTipoEnum.php:
+    - CC, NIT, CE, PP (label con descripción completa + shortLabel)
+    - Casts: Cliente::tipo_documento, Proveedor::tipo_documento
+
+  app/Enums/PagoMedioEnum.php:
+    - CAJA, BANCO (label, shortLabel, color, icon)
+    - No es cast de modelo (es solo opción UI en formularios de pago)
+    - Reemplaza arrays hardcodeados ['caja'=>'Caja', 'banco'=>'Banco']
+
+--- CASTS AÑADIDOS (4 MODELOS) ----------------------------------------------------
+
+  app/Models/Venta.php:
+    - 'estado_pago' => EstadoPagoEnum::class (en $casts)
+
+  app/Models/Remision.php:
+    - 'estado_pago' => EstadoPagoEnum::class (en $casts)
+
+  app/Models/Cliente.php:
+    - 'tipo_documento' => DocumentoTipoEnum::class (en $casts)
+
+  app/Models/Proveedor.php:
+    - 'tipo_documento' => DocumentoTipoEnum::class (en $casts)
+
+  NO se requirieron migraciones — columnas ya existían como string.
+
+--- BUGS CORREGIDOS (mismo patrón que Cajas) --------------------------------------
+
+  app/Filament/Resources/MovimientoBancos/Tables/MovimientoBancosTable.php:
+    - Línea 30-31: formatStateUsing(string $state) → formatStateUsing(MovimientoBancoTipo $state)
+    - Limpieza: tryFrom defensivo eliminado, ahora delega a $state->label()/color()
+
+  app/Filament/Resources/Bancos/Tables/BancosTable.php:
+    - Línea 35: formatStateUsing(string $state) → formatStateUsing(BancoTipoCuenta $state)
+    - +color() agregado (faltaba)
+
+  app/Filament/Resources/Remisions/Tables/RemisionsTable.php:
+    - tryFrom defensivo ($state instanceof Enum ? $state->value : $state) eliminado
+    - Ahora tipa RemisionEstado directo
+
+--- MAGIC STRINGS ELIMINADOS (~25 lugares) -----------------------------------------
+
+  Queries Eloquent:
+    - app/Models/MovimientoBanco.php: where('tipo', 'deposito') → MovimientoBancoTipo::DEPOSITO->value
+    - app/Models/MovimientoCaja.php: where('tipo', 'ingreso') → MovimientoCajaTipo::INGRESO->value
+    - whereIn('tipo', ['retiro','transferencia']) → enum values
+    - whereIn('tipo', ['egreso','traslado']) → enum values
+    - 'caja_pos' en queries → CajaTipo::POS->value (4 lugares)
+    - 'activa' en queries → CajaEstado::ACTIVA->value (5 lugares)
+
+  Comandos Artisan:
+    - EnviarResumenMensual: 'confirmada' → VentaEstado::CONFIRMADA->value
+    - EnviarRecordatoriosFacturas: 'confirmada' → enum, ['registrada','pendiente'] → enum values
+    - EnviarAlertasCotizaciones: 'pendiente' → enum, update('vencida') → enum value
+
+  Formularios Filament:
+    - VentaForm: cotizacion_id query ('pendiente','aceptada') → enum values
+    - VentaForm: estado_pago options array → EstadoPagoEnum::class
+    - VentaForm: 2× where('tipo', 'IVA') → ImpuestoTipo::IVA->value
+    - RemisionForm: estado_pago options array → EstadoPagoEnum::class
+    - DevolucionForm: 'confirmada' (2) → RemisionEstado::CONFIRMADA->value / VentaEstado::CONFIRMADA->value
+    - MovimientoCajaForm: 'activa', 'traslado'/'ingreso'/'egreso' → enum values
+    - MovimientoBancoForm: 'transferencia' → enum value
+    - PagoProveedorForm: 'activa', 'caja_pos', options origen → enums
+    - PagoClienteForm: 'activa', 'caja_pos' → enums
+    - RegistrarPago (Compras): 'caja'/'banco' options y validaciones → PagoMedioEnum
+    - RegistrarPago (Remisions): igual
+
+  ListCajas.php: badges y tab query → CajaEstado::ACTIVA->value / INACTIVA->value
+
+  Observers:
+    - VentaObserver.saving: 'pagado' === EstadoPagoEnum::PAGADO
+    - RemisionObserver.saving: 'pagado' === EstadoPagoEnum::PAGADO
+
+--- REFACTORS MECÁNICOS (8 lugares) -----------------------------------------------
+
+  Reemplazo collect(Enum::cases())->mapWithKeys(...) por Enum::class directo:
+    - CajaForm: CajaTipo
+    - BancoForm: BancoTipoCuenta
+    - MovimientoCajaForm: TrasladoDestinoTipo, CajaCategoria
+    - MovimientoBancoForm: MovimientoBancoTipo, TrasladoDestinoTipo
+    - ReporteVentas: VentaEstado
+    - ReporteCompras: CompraEstado
+    - DevolucionesTable: DevolucionEstado
+    - AjusteInventariosTable: MotivoAjuste
+
+--- SELECTFILTER BOOLEANO → TERNARYFILTER (6 lugares) -----------------------------
+
+  Reemplazo SelectFilter(['1'=>'Activo','0'=>'Inactivo']) por TernaryFilter nativo:
+    - CategoriasTable
+    - MarcasTable
+    - ProductosTable
+    - UnidadMedidasTable
+    - FormaPagosTable
+    - ImpuestosTable
+
+  Beneficio: filter chip nativo de Filament, mejor UX, consistente con IconColumn::boolean()
+
+--- ARRAYS HARDCODED → ENUMS ------------------------------------------------------
+
+  VentaForm / RemisionForm: estado_pago options array → EstadoPagoEnum::class
+  VentasTable / RemisionsTable: estado_pago badge match(string) → EstadoPagoEnum->color()
+  VentasTable / RemisionsTable: SelectFilter estado_pago options → EstadoPagoEnum::class
+  ClienteResource / ProveedorResource: tipo_documento options array → DocumentoTipoEnum::class
+  ClienteQuickCreate / ProveedorQuickCreate: tipo_documento options array → DocumentoTipoEnum::class
+  RegistrarPago (Compras/Remisions): options origen/destino → PagoMedioEnum::class
+
+--- TESTS ACTUALIZADOS -----------------------------------------------------------
+
+  tests/Feature/Services/PagoClienteObserverTest.php:
+    - 11 assertions de estado_pago actualizadas:
+      * ->toBe('parcial') → ->toBe(EstadoPagoEnum::PARCIAL)
+      * ->toBe('pagado') → ->toBe(EstadoPagoEnum::PAGADO)
+      * ->toBe('pendiente') → ->toBe(EstadoPagoEnum::PENDIENTE)
+    - Import agregado: use App\Enums\EstadoPagoEnum
+
+  Tests NO afectados (siguen pasando):
+    - 'tipo_documento' en assignments de Cliente/Proveedor/Devolucion
+      → Cast auto-convierte string → enum al guardar
+    - 'estado_pago' en setup de tests → igual
+    - Numeracion::where('tipo_documento', 'venta') → Numeracion no tiene cast,
+      columna sigue siendo string
+
+--- TESTS --------------------------------------------------------------------------
+
+  Resultado: 333 tests passed, 685 assertions, 247s
+  Pint: --dirty --format agent → passed
+
+--- VERSION ------------------------------------------------------------------------
+
+   v3.16.5 (config/app.php) → v3.16.8
+   (sync: sesiones 53-56 no habían actualizado config/app.php; este salto refleja
+   el estado real incluyendo Tarea 2 Z3/Z5/Z7/Z8 + auditoría enums de S55-S57)
+
+  config/app.php: 'v3.16.5' → 'v3.16.8'
+  contexto/Contexto.txt: header + DEUDA TÉCNICA actualizados
+
+  GitHub: NO se hizo commit/push/tag (instrucción del usuario)
+
+--- PENDIENTES PARA SIGUIENTE SESIÓN -----------------------------------------------
+
+  - Crear enums restantes: TipoPersonaEnum, RegimenTributarioEnum, AuditoriaOperacionEnum
+  - Añadir casts pendientes: Empresa.tipo_persona, Empresa.regimen_tributario,
+    Empresa.resolucion_fecha_*, Auditoria.operacion, AjusteInventario.es_saldo_inicial
+  - Crear PortalAccesoEnum (campo string en Cliente con comentario "enum: sin_acceso,
+    pendiente, activo")
+  - 18 recursos Filament aún con enums hardcodeados (ProductoForm, TransformacionForm,
+    CompraForm, CotizacionForm, etc.)
+   - Migración turnos.bodega_id pendiente de ejecutar
+
+==========================================================================================
+FIN SESION 57
+==========================================================================================
+================================
+

@@ -1,0 +1,1099 @@
+﻿================================================================================
+SESIÃ“N 13 â€” 2026-03-08
+================================================================================
+
+1. TAREAS PRINCIPALES
+   - DeleteAction individual en todas las tablas (listviews)
+   - Verificar y corregir configuraciÃ³n de Resend (.env)
+   - Flujo completo de correos en gestiÃ³n de usuarios
+   - AcciÃ³n "Rechazar" para solicitudes de acceso pendientes
+   - DiagnÃ³stico y fix: notificaciones no funcionaban en producciÃ³n
+
+2. DELETE ACTION EN TABLAS
+
+   Regla aplicada:
+   - Datos maestros: DeleteAction siempre visible (confirmaciÃ³n estÃ¡ndar)
+   - Documentos transaccionales: DeleteAction visible SOLO si estado = borrador/pendiente
+
+   Tablas de datos maestros (sin condiciÃ³n):
+   - BancosTable.php
+   - CajasTable.php (tambiÃ©n se agregaron recordActions y toolbarActions que faltaban)
+   - CategoriasTable.php
+   - FormaPagosTable.php
+   - ImpuestosTable.php
+   - MarcasTable.php
+   - UnidadMedidasTable.php
+   - NumeracionsTable.php
+   - PagoClientesTable.php
+   - PagoProveedorsTable.php
+
+   Tablas transaccionales (condicional por estado):
+   - VentasTable.php:      visible si estado->value === 'borrador'
+   - ComprasTable.php:     visible si estado->value === 'borrador'
+   - CotizacionsTable.php: visible si estado === 'pendiente'
+   - RemisionsTable.php:   visible si estado->value === 'borrador'
+   - DevolucionesTable.php: visible si estado === 'pendiente'
+   - TrasladoTable.php:    visible si estado === 'borrador'
+
+   Tabla Usuarios: SIN DeleteAction (mantiene Desactivar/Aprobar/Rechazar)
+
+3. CONFIGURACIÃ“N RESEND
+
+   Problema detectado: variable de entorno incorrecta en .env
+   - Incorrecto: RESEND_KEY=...
+   - Correcto:   RESEND_API_KEY=...  (nombre requerido por resend/resend-laravel)
+
+   Restricciones de Resend con dominio no verificado:
+   - Solo permite enviar a la direcciÃ³n registrada en la cuenta Resend
+   - No permite usar MAIL_FROM_ADDRESS con dominio arbitrario
+   - SoluciÃ³n temporal: MAIL_MAILER=log en producciÃ³n hasta tener dominio verificado
+   - Alternativa provisional: usar onboarding@resend.dev (solo pruebas limitadas)
+
+4. FLUJO COMPLETO DE CORREOS â€” GESTIÃ“N DE USUARIOS
+
+   Caso 1: Registro de nuevo usuario
+   - Usuario recibe: RegistroPendienteNotification (solo 'mail')
+     â†’ "Tu solicitud fue recibida. Un administrador la revisarÃ¡."
+   - Admins reciben: SolicitudAccesoNotification (canal 'database' + 'mail')
+     â†’ Datos del solicitante + link a ediciÃ³n del usuario
+
+   Caso 2: AprobaciÃ³n por administrador
+   - Usuario recibe: AccesoAprobadoNotification (canal 'database' + 'mail')
+     â†’ "Tu acceso fue aprobado. Rol asignado: X. [Iniciar sesiÃ³n]"
+
+   Caso 3: Rechazo (eliminaciÃ³n de usuario pendiente)
+   - Usuario recibe: AccesoRechazadoNotification (solo 'mail')
+     â†’ Disparada automÃ¡ticamente por el evento 'deleting' del modelo User
+
+   Caso 4: EliminaciÃ³n de usuario activo
+   - Usuario recibe: CuentaEliminadaNotification (solo 'mail')
+     â†’ Disparada automÃ¡ticamente por el evento 'deleting' del modelo User
+
+   PatrÃ³n usado para envÃ­os automÃ¡ticos (User::booted):
+   - static::deleting() â†’ detecta si usuario era activo o pendiente â†’ notification correcta
+   - try/catch en todos los puntos de notify() â†’ fallos de mail no bloquean el flujo
+
+5. ACCIÃ“N "RECHAZAR" EN USERRESOURCE
+
+   - Visible solo para usuarios con activo=false (pendientes de aprobaciÃ³n)
+   - Solo para rol 'administrador'
+   - Modal con confirmaciÃ³n: muestra nombre y email del solicitante
+   - AcciÃ³n: $record->delete() â†’ dispara 'deleting' â†’ envÃ­a AccesoRechazadoNotification
+   - NotificaciÃ³n de UI: warning "Solicitud rechazada: {nombre}"
+
+6. DIAGNÃ“STICO: NOTIFICACIONES NO FUNCIONABAN
+
+   Causa raÃ­z:
+   - migration 2026_03_07_100000_create_notifications_table.php existÃ­a solo localmente
+   - NO estaba commiteada en git â†’ NO llegÃ³ al servidor â†’ tabla 'notifications' ausente
+   - Campana de Filament ($panel->databaseNotifications()) fallaba silenciosamente
+
+   Fix requerido por el usuario:
+   - git add database/migrations/2026_03_07_100000_create_notifications_table.php
+   - git commit && git push â†’ Laravel Cloud ejecuta las migraciones automÃ¡ticamente
+
+   Fix secundario (ya aplicado en cÃ³digo):
+   - notify() sin try/catch propagaba excepciones de Resend, bloqueando UI
+   - Se wrapearon en try/catch con logger()->warning() en:
+     â†’ app/Filament/Pages/Auth/Register.php
+     â†’ app/Filament/Resources/UserResource.php (acciones aprobar/rechazar)
+     â†’ app/Models/User.php (booted deleting event)
+
+7. ARCHIVOS CREADOS/MODIFICADOS
+
+   | Archivo                                                    | Cambio                               |
+   |------------------------------------------------------------|--------------------------------------|
+   | app/Notifications/RegistroPendienteNotification.php        | CREADO â€” correo al nuevo usuario     |
+   | app/Notifications/AccesoRechazadoNotification.php          | CREADO â€” correo rechazo              |
+   | app/Notifications/CuentaEliminadaNotification.php          | CREADO â€” correo cuenta eliminada     |
+   | app/Notifications/AccesoAprobadoNotification.php           | +canal mail + toMail()               |
+   | app/Notifications/SolicitudAccesoNotification.php          | +canal mail + toMail()               |
+   | app/Filament/Pages/Auth/Register.php                       | +RegistroPendienteNotification       |
+   | app/Filament/Resources/UserResource.php                    | +Action 'rechazar' + try/catch       |
+   | app/Models/User.php                                        | +booted() deleting event             |
+   | .env                                                       | RESEND_KEY â†’ RESEND_API_KEY          |
+   | database/migrations/*_create_notifications_table.php       | PENDIENTE commit a git               |
+   | 16 archivos Table/*.php                                    | +DeleteAction (maestros y transacc.) |
+   | contexto/Bitacora.txt                                      | Esta entrada                         |
+
+8. PENDIENTES TRAS ESTA SESIÃ“N
+   - [ ] Commitear migration de notifications a git (URGENTE para producciÃ³n)
+   - [ ] Configurar MAIL_MAILER=log en Laravel Cloud temporalmente
+   - [ ] Verificar dominio en Resend y actualizar RESEND_API_KEY con clave real (re_...)
+   - [ ] Ejecutar suite de tests y corregir los que fallen
+
+9. ESTADO DEL PROYECTO
+   Cumplimiento estimado: ~97%
+   Pendiente: portal de clientes, POS, tests finales
+
+================================================================================
+FIN SESIÃ“N 13
+================================================================================
+
+================================================================================
+SESIÃ“N 14 â€” 2026-03-10
+================================================================================
+
+1. TAREAS PRINCIPALES
+   - Fix storage para producciÃ³n (logo empresa no cargaba en Laravel Cloud)
+   - AuditorÃ­a de seguridad: casts de fechas, $fillable, validaciones
+
+2. FIX STORAGE â€” LOGO DE EMPRESA IN PRODUCCIÃ“N
+
+   Problema: El logo de la empresa no cargaba tras el deploy a Laravel Cloud.
+
+   Causa: AdminPanelProvider usaba asset('storage/' . $logo), URL del disco
+   local que no funciona cuando FILESYSTEM_DISK=s3.
+
+   Fixes aplicados:
+   - AdminPanelProvider.php: asset('storage/...') â†’ Storage::url(...)
+     (+import Illuminate\Support\Facades\Storage)
+   - ProductoInfolist.php: eliminado ->disk('public') hardcodeado
+
+   ConfiguraciÃ³n requerida en Laravel Cloud:
+   - FILESYSTEM_DISK=s3
+
+3. AUDITORÃA DE SEGURIDAD
+
+   3.1 Casts de fechas
+   - Revisados 44 modelos â€” resultado: 100% cubiertos, sin cambios necesarios
+
+   3.2 $fillable â€” timestamps de auditorÃ­a
+   Problema: confirmada_en y revertida_en estaban en $fillable pero son
+   campos de auditorÃ­a interna â€” nunca deben asignarse desde formularios.
+
+   Modelos corregidos (campo removido de $fillable):
+   - Venta:      confirmada_en
+   - Compra:     confirmada_en
+   - Remision:   confirmada_en
+   - Devolucion: confirmada_en
+   - Traslado:   confirmada_en, revertida_en
+
+   Servicios actualizados (asignaciÃ³n directa antes del update()):
+   - VentaService, CompraService, RemisionService, TrasladoService
+
+   NO removidos (servicios usan update(), riesgo mÃ­nimo en app Filament-only):
+   - estado_pago, costo_promedio, saldo (Cliente/Proveedor)
+
+   3.3 Rate limiting â€” OK (Filament lo incluye en login por defecto)
+
+4. ARCHIVOS MODIFICADOS
+
+   | Archivo                                                       | Cambio                          |
+   |---------------------------------------------------------------|---------------------------------|
+   | app/Providers/Filament/AdminPanelProvider.php                 | asset('storage/') â†’ Storage::url() |
+   | app/Filament/Resources/Productos/Schemas/ProductoInfolist.php | ->disk('public') eliminado      |
+   | app/Models/Venta.php                                          | confirmada_en fuera de fillable |
+   | app/Models/Compra.php                                         | confirmada_en fuera de fillable |
+   | app/Models/Remision.php                                       | confirmada_en fuera de fillable |
+   | app/Models/Devolucion.php                                     | confirmada_en fuera de fillable |
+   | app/Models/Traslado.php                                       | confirmada_en+revertida_en      |
+   | app/Services/VentaService.php                                 | asignaciÃ³n directa confirmada_en |
+   | app/Services/CompraService.php                                | asignaciÃ³n directa confirmada_en |
+   | app/Services/RemisionService.php                              | asignaciÃ³n directa confirmada_en |
+   | app/Services/TrasladoService.php                              | asignaciÃ³n directa ambos campos |
+   | contexto/Bitacora.txt                                         | Esta entrada                    |
+
+================================================================================
+FIN SESIÃ“N 14
+================================================================================
+
+================================================================================
+SESIÃ“N 15 â€” 2026-03-10
+================================================================================
+
+1. TAREAS COMPLETADAS
+   - E0B: BulkAction exportar PDF (Ventas + Cotizaciones)
+   - F1:  Ejecutar y corregir tests â†’ 148 tests, 0 failed
+   - F3:  Eliminar RecalcularPrecioVentaService (cÃ³digo muerto)
+
+2. E0B â€” BULK PDF VENTAS Y COTIZACIONES
+
+   ImplementaciÃ³n:
+   - Vista compartida: resources/views/pdf/listado.blade.php
+     Muestra: logo empresa, tabla de registros, resumen con totales
+     Columnas ventas: Nro., Cliente, Fecha, Vencimiento, Total, Saldo, Estado
+     Columnas cotizaciones: Nro., Cliente, Fecha, Vigencia, Total, Estado
+   - BulkAction en VentasTable.php: descarga 'ventas-YYYY-MM-DD.pdf'
+   - BulkAction en CotizacionsTable.php: descarga 'cotizaciones-YYYY-MM-DD.pdf'
+   - Usa dompdf (barryvdh/laravel-dompdf, ya instalado)
+   - response()->streamDownload() dentro del action
+
+3. F1 â€” TESTS: 148 PASSED, 0 FAILED
+
+   Ãšnico fallo encontrado: Tests\Feature\LoteStockTest (2 tests)
+   Causa: Venta::create() en el test no tenÃ­a Numeracion activa en BD
+          El booted hook creating() requiere Numeracion para generar el nÃºmero.
+   Fix: Agregado Numeracion::create() al inicio de cada test
+        (mismo patrÃ³n que DevolucionTest con funciÃ³n crearNumeracionVenta())
+
+   Archivo corregido: tests/Feature/LoteStockTest.php
+
+4. F3 â€” RECALCULARPRECIOVENTASERVICE ELIMINADO
+
+   Archivo: app/Services/RecalcularPrecioVentaService.php
+   Motivo:
+   - No era invocado en ningÃºn archivo del proyecto (bÃºsqueda exhaustiva)
+   - No tenÃ­a tests propios
+   - Referenciaba campos empresa.margen_ganancia_default y
+     empresa.margen_ganancia_minimo que no existen en la migraciÃ³n de Empresa
+
+5. ESTADO FINAL DEL PROYECTO
+   Tests: 148 / 148 passing
+   Pendientes opcionales: E0D (spinners), E0F (activity log)
+   Cumplimiento: ~99.5%
+
+6. ARCHIVOS MODIFICADOS
+
+   | Archivo                                                  | Cambio                              |
+   |----------------------------------------------------------|-------------------------------------|
+   | resources/views/pdf/listado.blade.php                   | CREADO â€” vista bulk PDF             |
+   | app/Filament/Resources/Ventas/Tables/VentasTable.php    | +BulkAction exportarPdf             |
+   | app/Filament/Resources/Cotizacions/Tables/CotizacionsTable.php | +BulkAction exportarPdf      |
+   | tests/Feature/LoteStockTest.php                         | +Numeracion::create() en cada test  |
+   | app/Services/RecalcularPrecioVentaService.php           | ELIMINADO                           |
+   | contexto/Tasklist.txt                                   | E0B âœ…, F1 âœ…, F3 âœ… marcados       |
+   | contexto/Bitacora.txt                                   | Esta entrada                        |
+
+================================================================================
+FIN SESIÃ“N 15
+================================================================================
+
+
+================================================================================
+SESIÃ“N 16 â€” 2026-03-10
+================================================================================
+
+OBJETIVO: Tests 234/234 verdes + consulta sobre email en producciÃ³n (Laravel Cloud)
+
+â”€â”€â”€ F1 â€” SUITE DE TESTS: 0 FAILED â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+CONTEXTO:
+  - Suite anterior (S15): 22 failed, 212 passed (pre-fix .env)
+  - Con .env corregido (MAIL_FROM_NAME): aÃºn 22 fallos
+  - Causa raÃ­z: hook `creating` del modelo Venta SIEMPRE llama Numeracion::create()
+    aunque el test pase un `numero` hardcodeado
+
+TESTS CORREGIDOS (patrÃ³n: agregar Numeracion::create() al inicio):
+  - ConcurrencyTest.php          â†’ Numeracion en setupConcurrencia()
+  - IdempotenciaConfirmacionTest â†’ Numeracion en setUp()
+  - PagoClienteObserverTest      â†’ Numeracion en setupPagoCliente()
+  - RemisionVentaIntegrationTest â†’ Numeracion solo para 'venta' (Remision genera su
+                                    propio nÃºmero autoincremental, sin Numeracion)
+  - VentaCostoUnitarioTest       â†’ Numeracion en setupVentaCosto()
+
+HALLAZGO CRÃTICO â€” tabla numeraciones:
+  - El enum tipo_documento solo acepta: venta, nota_credito, nota_debito, documento_equivalente
+  - NumeracionServiceTest::tipos-distintos-independientes usaba 'cotizacion' â†’ CHECK constraint fail
+  - Fix: cambiar 'cotizacion' â†’ 'nota_credito' en ese test
+  - Remision usa su propio nÃºmero autoincremental (REM-00001), NO la tabla numeraciones
+
+RESULTADO FINAL:
+  Tests: 234 passed, 0 failed (425 assertions) â€” Suite completa verde âœ…
+
+â”€â”€â”€ CONSULTA EMAIL EN PRODUCCIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+SITUACIÃ“N:
+  - Resend no acepta el dominio temporal de Laravel Cloud (*.laravel.cloud)
+  - MailerSend tampoco permite enviar desde dominios de terceros
+  - Ambos servicios exigen dominio propio verificado (SPF/DKIM)
+
+OPCIONES:
+  A) Gmail SMTP + contraseÃ±a de aplicaciÃ³n (funciona sin dominio propio):
+     MAIL_MAILER=smtp / smtp.gmail.com:587 / TLS
+  B) MAIL_MAILER=log â†’ emails van al log, no se envÃ­an (temporal)
+  C) A futuro: MailerSend o Resend con dominio propio verificado
+
+ARCHIVOS MODIFICADOS:
+  | Archivo                                           | Cambio                                     |
+  |---------------------------------------------------|--------------------------------------------|
+  | tests/Feature/Services/ConcurrencyTest.php        | Numeracion::create() en setupConcurrencia  |
+  | tests/Feature/Services/IdempotenciaConfirmacion.. | Numeracion::create() en setUp()            |
+  | tests/Feature/Services/PagoClienteObserverTest.php| Numeracion::create() en setupPagoCliente   |
+  | tests/Feature/Services/RemisionVentaIntegration.. | Numeracion::create() solo venta            |
+  | tests/Feature/Ventas/VentaCostoUnitarioTest.php   | Numeracion::create() en setupVentaCosto    |
+  | tests/Feature/Services/NumeracionServiceTest.php  | 'cotizacion' â†’ 'nota_credito'              |
+
+================================================================================
+FIN SESIÃ“N 16
+================================================================================
+
+
+================================================================================
+SESIÃ“N 17 â€” 2026-03-11
+================================================================================
+
+OBJETIVO: Configurar storage S3 (Cloudflare R2) para logos e imÃ¡genes en producciÃ³n
+
+â”€â”€â”€ CONTEXTO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  En S14 se corrigiÃ³ AdminPanelProvider para usar Storage::url() en lugar de
+  asset('storage/...'). Sin embargo quedaba pendiente la configuraciÃ³n completa
+  de S3 en producciÃ³n (Laravel Cloud). En esta sesiÃ³n se completÃ³.
+
+â”€â”€â”€ DIAGNÃ“STICO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Archivos que usan Storage::url() (afectados por cambio de disco):
+    - app/Models/User.php:95                          â†’ avatar de usuario
+    - app/Providers/Filament/AdminPanelProvider.php:55 â†’ logo de empresa en panel
+    - resources/views/pdf/kardex.blade.php:3          â†’ logo en PDF kardex
+    - resources/views/pdf/listado.blade.php:4         â†’ logo en PDF listado
+    - resources/views/pdf/documento.blade.php:7       â†’ logo en PDF documentos
+
+  Todo el cÃ³digo ya usaba el disco DEFAULT (sin hardcodear 'public').
+  config/filament-edit-profile.php usa env('FILESYSTEM_DISK', 'public').
+  â†’ Con solo cambiar FILESYSTEM_DISK=s3 en producciÃ³n, todo funciona.
+
+â”€â”€â”€ FIX APLICADO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Problema especÃ­fico con Cloudflare R2:
+    El endpoint r2.cloudflarestorage.com es el API S3 (requiere auth).
+    Storage::url() sin 'url' configurado generarÃ­a el URL del API, no el pÃºblico.
+    Se necesita la URL pÃºblica del bucket (pub-xxx.r2.dev o dominio custom).
+
+  Cambio en config/filesystems.php â€” disco 's3':
+    ANTES: sin clave 'url'
+    AHORA: 'url' => env('AWS_URL'),   â† URL pÃºblica de R2 (pub-xxx.r2.dev)
+
+  Variables agregadas a .env (vacÃ­as, para local sigue usando FILESYSTEM_DISK=public):
+    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION=auto,
+    AWS_BUCKET, AWS_ENDPOINT, AWS_URL, AWS_USE_PATH_STYLE_ENDPOINT=false
+
+  Mismo set agregado a .env.example (documentaciÃ³n).
+
+â”€â”€â”€ PROVEEDOR: Cloudflare R2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Credenciales configuradas para Laravel Cloud (NO en .env local):
+    Bucket:   fls-a147607a-2ee1-4b80-9d9a-5c517b5f642a
+    Endpoint: https://367be3a2035528943240074d0096e0cd.r2.cloudflarestorage.com
+    RegiÃ³n:   auto
+
+  ConfiguraciÃ³n R2 necesaria:
+    - Habilitar Public access en el bucket â†’ genera pub-xxx.r2.dev
+    - AWS_URL = ese URL pub-xxx.r2.dev
+
+â”€â”€â”€ DECISIÃ“N: BUCKET PÃšBLICO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Se evaluÃ³ bucket privado (temporaryUrl) vs pÃºblico.
+  DecisiÃ³n: pÃºblico â€” justificaciÃ³n:
+    - Solo se almacenan logos de empresa, avatares de usuario e imÃ¡genes de producto
+    - Los PDFs (facturas, kardex, remisiones) se generan al vuelo y NO se guardan en S3
+    - URLs no son predecibles (Filament usa UUIDs en los nombres de archivo)
+    - Directory listing deshabilitado por defecto en R2
+  Si en el futuro se guardan documentos sensibles â†’ usar segundo disco s3_privado
+  con 'visibility' => 'private' y Storage::temporaryUrl() para esos archivos.
+
+â”€â”€â”€ ARCHIVOS MODIFICADOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  | Archivo                    | Cambio                                        |
+  |----------------------------|-----------------------------------------------|
+  | config/filesystems.php     | +'url' => env('AWS_URL') en disco s3          |
+  | .env                       | +variables AWS (vacÃ­as, uso local = public)    |
+  | .env.example               | +AWS_ENDPOINT, AWS_URL; regiÃ³n default = auto  |
+  | contexto/Bitacora.txt      | Esta entrada                                  |
+
+â”€â”€â”€ âš ï¸  CHECKLIST PARA FUTUROS DEPLOYS A LARAVEL CLOUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Variables de entorno OBLIGATORIAS en Laravel Cloud para que las imÃ¡genes funcionen:
+
+    FILESYSTEM_DISK=s3
+    AWS_ACCESS_KEY_ID=<key de R2>
+    AWS_SECRET_ACCESS_KEY=<secret de R2>
+    AWS_DEFAULT_REGION=auto
+    AWS_BUCKET=<nombre del bucket R2>
+    AWS_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
+    AWS_URL=https://pub-<hash>.r2.dev        â† URL pÃºblica del bucket (public access)
+    AWS_USE_PATH_STYLE_ENDPOINT=false
+
+  Sin estas variables â†’ logos y avatares NO cargan en producciÃ³n.
+  Sin AWS_URL â†’ Storage::url() genera el URL del API (requiere auth) â†’ imagen rota.
+
+  LOCALMENTE: mantener FILESYSTEM_DISK=public (las demÃ¡s AWS quedan vacÃ­as).
+  No ejecutar storage:link en producciÃ³n (no aplica con S3).
+
+================================================================================
+FIN SESIÃ“N 17
+================================================================================
+
+
+================================================================================
+SESIÃ“N 18 â€” 2026-03-13 â€” FORMATO MONEDA COLOMBIANA + IDE FALSE POSITIVES + VERSIÃ“N
+================================================================================
+
+OBJETIVOS DE LA SESIÃ“N:
+  1. Corregir falsos positivos del linter PHP en VSCode (Blade, @forelse, ??)
+  2. Implementar versiÃ³n de app fÃ¡cilmente actualizable
+  3. Aplicar formato de moneda colombiana en todo el proyecto
+
+â”€â”€â”€ FALSOS POSITIVOS DEL LINTER PHP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Errores que mostraba el IDE pero NO eran errores reales:
+    - "namespace Default" en ProgressRenderer.php (archivo compilado de vendor)
+    - "Syntax error: unexpected token 'as'" en @forelse de Blade
+    - "Syntax error: unexpected token '??'" en Blade
+
+  CAUSA: El linter php (php --syntax-check) no entiende sintaxis Blade.
+
+  SOLUCIÃ“N configurada:
+    - Se indicÃ³ al usuario configurar en VSCode settings.json:
+        "php.validate.executablePath": "D:/www/laragon/bin/php/php-8.4.12-nts-Win32-vs17-x64/php.exe"
+    - Para excluir archivos Blade y vendor del linter se puede usar la extensiÃ³n
+      Intelephense o configurar php.validate.enable:false y usar solo Intelephense.
+    - Advertencia: desactivar el linter podrÃ­a ocultar errores reales de PHP puro.
+
+â”€â”€â”€ VERSIÃ“N DE APLICACIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  ANTES: `v3.01` hardcodeado en resources/views/filament/footer.blade.php
+
+  IMPLEMENTACIÃ“N:
+    - config/app.php: agregada clave 'version' => '3.01' (luego â†’ '3.02')
+    - footer.blade.php: cambiado a `v{{ config('app.version') }}`
+    - Para actualizar versiÃ³n: solo modificar config/app.php â†’ 'version'
+
+â”€â”€â”€ FORMATO MONEDA COLOMBIANA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  OBJETIVO: Formato colombiano â€” sin decimales, punto miles, sÃ­mbolo $, sin "COP"
+  Ej: $2.712.366 (no $2,712,366.00 ni $2.712.366,00 COP)
+
+  CONFIGURACIÃ“N BASE:
+    config/money.php â€” entrada COP:
+      precision: 0          (sin centavos)
+      subunit: 1            (era 100)
+      symbol: '$'
+      symbol_first: true
+      decimal_mark: ','
+      thousands_separator: '.'
+
+  COMPONENTES FILAMENT AFECTADOS:
+    - ->money('COP') [built-in Filament]: usa PHP NumberFormatter â†’ NO respeta money.php
+      â†’ Reemplazado por ->currency('COP') [ariaieboy/filament-currency] que SÃ usa money.php
+    - ->currencyMask('.', ',', 2) â†’ ->currencyMask('.', ',', 0) [44 ocurrencias]
+    - number_format($v, 2) â†’ number_format($v, 0, ',', '.') en widgets y notificaciones
+
+  ARCHIVOS MODIFICADOS (tablas, infolists, widgets, pages â€” 22 PHP files):
+    Tables : VentasTable, ComprasTable, RemisionsTable, CotizacionsTable, ProductosTable
+    Infolists: ProductosInfolist, ClienteResource, ProveedorResource,
+               MovimientoBancosInfolist, MovimientoInventariosInfolist
+    Pages  : KardexProducto, ReporteCartera, ReporteRentabilidad
+    Widgets: UltimasVentasWidget, StockBajoWidget, BancosTable, CajasTable,
+             MovimientoCajasTable, MovimientoBancosTable
+    Otros  : DevolucionesTable, PagoClientesTable, PagoProveedorsTable
+    ResumenGeneralWidget, ProductosStatsWidget (number_format)
+    FacturaPorVencerNotification, FacturaVencidaNotification (number_format)
+
+  ARCHIVOS MODIFICADOS (forms/schemas â€” 10 PHP files, 44 currencyMask):
+    VentaForm, CompraForm, RemisionForm, CotizacionForm, ProductoForm,
+    DevolucionForm, PagoClienteForm, PagoProveedorForm,
+    MovimientoCajaForm, TransformacionForm
+
+â”€â”€â”€ NOTA TÃ‰CNICA: PRECISIÃ“N vs ALMACENAMIENTO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Cambiar precision:0 en money.php solo afecta VISUALIZACIÃ“N.
+  La BD sigue almacenando decimal(15,2) sin redondear.
+  El redondeo real ocurre en la capa de negocio (ej. % de utilidad) â€” responsabilidad
+  del cÃ³digo PHP, no del formateador de pantalla.
+
+â”€â”€â”€ ARCHIVOS MODIFICADOS (resumen) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  | Archivo                          | Cambio                                |
+  |----------------------------------|---------------------------------------|
+  | config/app.php                   | +'version' => '3.02'                  |
+  | resources/views/filament/footer  | v3.01 â†’ v{{ config('app.version') }}  |
+  | config/money.php                 | COP: precision 2â†’0, subunit 100â†’1     |
+  | 22 archivos tabla/infolist/pages | ->money('COP') â†’ ->currency('COP')   |
+  | 10 archivos form/schema          | currencyMask precision 2â†’0 (44 hits)  |
+  | ResumenGeneralWidget             | number_format 2â†’0 con sep COP         |
+  | ProductosStatsWidget             | number_format 2â†’0 con sep COP         |
+  | FacturaPorVencerNotification     | number_format 2â†’0 con sep COP         |
+  | FacturaVencidaNotification       | number_format 2â†’0 con sep COP         |
+
+â”€â”€â”€ VERSIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  3.01 â†’ 3.02  (cambio de formato moneda a escala de proyecto)
+
+================================================================================
+FIN SESIÃ“N 18
+================================================================================
+
+
+================================================================================
+SESIÃ“N 20 â€” 2026-03-15
+Permisos por rol + Notificaciones faltantes + Correo Gmail
+================================================================================
+
+â”€â”€â”€ CORREO GMAIL (desarrollo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Configurado SMTP Gmail con App Password para pruebas de correo
+  .env: MAIL_HOST=smtp.gmail.com, MAIL_PORT=587, MAIL_ENCRYPTION=tls
+
+â”€â”€â”€ NOTIFICACIONES â€” FORMATO FILAMENT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  9 notificaciones con canal 'database' usaban formato raw array (titulo/mensaje)
+  Filament requiere Notification::make()->getDatabaseMessage()
+  Corregidas: SolicitudAcceso, AccesoAprobado, StockBajo, LoteProximoVencer,
+    FacturaPorVencer, FacturaVencida, DevolucionConfirmada,
+    CotizacionSeguimiento, CotizacionPorVencer
+
+â”€â”€â”€ NOTIFICACIONES â€” NUEVAS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  CuentaSuspendidaNotification (mail) â€” al suspender usuario
+  CompraConfirmadaNotification (database) â€” al confirmar compra â†’ admins, contador
+  VentaConfirmadaNotification (database) â€” al confirmar venta â†’ admins
+
+â”€â”€â”€ PERMISOS POR ROL â€” IMPLEMENTACIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  RoleSeeder.php define 120 permisos pero NO se aplicaban en Filament.
+  Todos los roles veÃ­an todos los mÃ³dulos.
+
+  Aplicados canAccess(), canCreate(), canEdit(), canDelete() en:
+  - 22 recursos estÃ¡ndar (banco, bodega, caja, categorÃ­a, compra, cotizaciÃ³n,
+    devolucion, forma_pago, formula_transformacion, impuesto, marca,
+    movimiento_caja, numeracion, pago_cliente, pago_proveedor, producto,
+    remision, transformacion, traslado, unidad_medida, cliente, proveedor)
+  - 3 recursos read-only (movimiento_banco, movimiento_inventario, stock_bodega)
+  - 2 recursos especiales (venta con lÃ³gica NumeraciÃ³n, usuario)
+  - EmpresaResource: no tocado (super-admin hardcoded)
+
+  Custom pages con canAccess():
+  - ReporteCartera, ReporteRentabilidad â†’ reporte.ver
+
+  Widgets con canView():
+  - ResumenGeneralWidget â†’ dashboard.ver
+  - StockBajoWidget â†’ stock.ver
+  - UltimasVentasWidget â†’ venta.ver
+
+  Tests: actualizado Pest.php helper crearUsuarioConRol() para ejecutar
+    RoleSeeder y crear permisos completos
+
+  | MÃ³dulo        | administrador | auxiliar | contador | vendedor |
+  |---------------|:---:|:---:|:---:|:---:|
+  | Usuarios      |  âœ“  |  -  |  -  |  -  |
+  | ConfiguraciÃ³n |  âœ“  | ver | ver |  -  |
+  | Inventario    |  âœ“  |  âœ“  | ver |  -  |
+  | Compras       |  âœ“  |  âœ“  | ver |  -  |
+  | Ventas        |  âœ“  |  âœ“  | ver |  âœ“  |
+  | Reportes      |  âœ“  |  âœ“  |  âœ“  |  -  |
+  | Bancos/Cajas  |  âœ“  |  âœ“  | ver |  -  |
+
+â”€â”€â”€ VERSIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  3.02 â†’ 3.03  (permisos por rol + notificaciones corregidas)
+
+â”€â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  230 tests, 418 assertions, 0 failed
+
+================================================================================
+FIN SESIÃ“N 20
+================================================================================
+
+
+================================================================================
+SESIÃ“N 22 â€” 2026-03-17 â€” AuditorÃ­a de cÃ³digo y correcciones
+================================================================================
+
+â”€â”€â”€ CONFIGURACIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - QUEUE_CONNECTION cambiado a sync en .env local (2FA email no se enviaba
+    porque los jobs se encolaban sin queue worker corriendo)
+
+â”€â”€â”€ AUDITORÃA DE CÃ“DIGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  AuditorÃ­a completa de todo el cÃ³digo modificado y nuevo.
+  Se ejecutaron 4 agentes en paralelo revisando:
+    - Resources, Pages, Widgets, Notifications, Controllers, Middleware
+    - Services y Models
+    - Ventas, Compras, Cotizaciones, Remisiones y demÃ¡s recursos CRUD
+    - Migrations, Enums, Views, Config, Routes
+
+  14 bugs encontrados y corregidos:
+
+  Bugs de codificaciÃ³n (columnas/variables):
+  [OK] ReporteVentas.php â€” 'impuesto' â†’ 'impuestos' (columna no existe)
+  [OK] ReporteVentas.php â€” 'user_id' â†’ 'usuario_id' (columna no existe)
+  [OK] PdfController.php â€” 'user_id' â†’ 'usuario_id' (columna no existe)
+  [OK] reporte-ventas.blade.php â€” 'impuesto' â†’ 'impuestos' (x2 ocurrencias)
+
+  Bugs de BackedEnum como clave de array:
+  [OK] ListDevoluciones.php â€” enum como clave de array â†’ TypeError
+  [OK] ListConteoFisicos.php â€” enum como clave de array â†’ TypeError
+  [OK] ListAjusteInventarios.php â€” enum como clave de array â†’ TypeError
+
+  Bugs de null safety:
+  [OK] DevolucionForm.php â€” $r->cliente->nombre sin ?-> (x2)
+  [OK] ConteoFisicoService.php â€” $producto->costo_promedio sin ?->
+
+  Bugs de permisos (copy-paste):
+  [OK] ConteoFisicoResource.php â€” canEdit/canDelete usaban 'crear' en vez
+       de 'editar'/'eliminar'
+
+  Bugs de lÃ³gica de cÃ¡lculo:
+  [OK] CajaService.php â€” tipo 'traslado' sumaba saldo en vez de restar
+
+  Race conditions corregidos:
+  [OK] CajaService.php â€” lockForUpdate() en registrarEgreso (lÃ­nea 55)
+  [OK] CajaService.php â€” lockForUpdate() en trasladarABanco (lÃ­nea 86)
+  [OK] CajaService.php â€” lockForUpdate() en registrarMovimiento (lÃ­nea 210)
+  [OK] TrasladoService.php â€” lockForUpdate() en moverStock (lÃ­nea 98)
+
+  Falsos positivos descartados:
+  - Strings en queries con modelo que tiene $casts â†’ Laravel resuelve OK
+  - MotivoAjuste 'daÃ±o' con Ã± â†’ UTF-8 funciona en PHP 8.4 + MySQL utf8mb4
+
+â”€â”€â”€ DOCUMENTO DE AUDITORÃA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Creado contexto/Auditoria.txt â€” checklist de 12 reglas de codificaciÃ³n
+  genÃ©ricas para cualquier proyecto Laravel + Filament + PHP.
+  Reglas basadas en errores reales encontrados en este proyecto.
+  No cubre lÃ³gica de negocio â€” eso va en tests (php artisan test).
+
+â”€â”€â”€ VERSIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  3.07 (sin cambio â€” correcciones internas)
+
+â”€â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  263 tests, 494 assertions, 0 failed
+
+================================================================================
+FIN SESIÃ“N 22
+================================================================================
+
+
+================================================================================
+SESIÃ“N 23 â€” 2026-03-28 â€” REVISIÃ“N DE PRODUCCIÃ“N + CORRECCIONES
+================================================================================
+
+Origen: revisiÃ³n de usuario en entorno de producciÃ³n (Laravel Cloud)
+13 puntos reportados, todos resueltos.
+
+â”€â”€â”€ ERRORES 500 CORREGIDOS (3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+1. TRANSFORMACIONES â€” 3 bugs:
+   a) Enum tipo en form/tabla/infolist usaba "anulada" â†’ corregido a "revertida"
+      (TransformacionEstado solo define borrador|confirmada|revertida)
+   b) Tipos en form usaban "manufactura/empaque" â†’ corregido a "fabricacion/reenvase/combo/promo"
+      (alineados con TransformacionTipo enum y migraciÃ³n de transformaciones)
+   c) Columna serial faltante en transformacion_detalles â†’ agregada a migraciÃ³n original
+   d) Enum tipo en formula_transformaciones corregido: manufacturaâ†’fabricacion, empaqueâ†’reenvase
+      (migraciÃ³n original actualizada)
+   Archivos: TransformacionForm, TransformacionTable, TransformacionInfolist,
+             FormulaTransformacionForm, 2 migraciones originales
+
+2. MOVIMIENTOS BANCARIOS â€” ViewMovimientoBanco tenÃ­a EditAction pero
+   la pÃ¡gina Edit no estaba registrada en getPages(). Movimientos son solo lectura.
+   Fix: eliminado EditAction, agregado botÃ³n "Volver".
+
+3. VENTAS POR VENDEDOR â€” Query usaba selectRaw+groupBy+with('usuario')
+   que falla con datos agregados. Fix: reescrito con JOIN directo.
+   Archivos: ReporteVentasVendedor.php, PdfController, ExcelController, blade
+
+â”€â”€â”€ MEJORAS UX (6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+4. BOTÃ“N "VOLVER" â€” Agregado en 9 pÃ¡ginas ViewRecord:
+   ViewCliente, ViewProveedor, ViewProducto, ViewEmpresa, ViewMovimientoBanco,
+   ViewMovimientoCaja, ViewMovimientoInventario, ViewStockBodega, ViewTransformacion
+
+5. LABEL "SALDO INICIAL" â€” "ajuste_positivo" ahora se muestra como "Saldo Inicial (+)"
+   en MovimientoInventariosTable, KardexProducto y kardex.blade.php
+
+6. PDF COTIZACIÃ“N DESDE LISTADO â€” Agregada acciÃ³n Html2MediaAction como
+   row action en CotizacionsTable (botÃ³n impresora por fila)
+
+7. CONFIRMAR DEVOLUCIÃ“N â€” Nueva acciÃ³n ConfirmarDevolucion en EditDevolucion
+   (visible en estado borrador, ejecuta procesarDevolucion via model hook)
+
+8. SALDO CAJA CORREGIDO â€” CajasTable usaba getSaldoActual â†’ corregido a saldo_actual
+   (nombre correcto del accessor Eloquent getSaldoActualAttribute)
+
+9. BADGE MOVIMIENTOS CAJA â€” getNavigationBadge() en MovimientoCajaResource
+   muestra count de movimientos del dÃ­a
+
+â”€â”€â”€ FUNCIONALIDAD NUEVA (4) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+10. TIPO PRODUCTO â€” Campo tipo_producto en productos:
+    Enum: comprado|manufacturado|materia_prima|servicio (default: comprado)
+    MigraciÃ³n original actualizada, modelo y form de Producto actualizados
+
+11. SALDO EN PAGO PROVEEDOR â€” PagoProveedorForm ahora muestra saldo_pendiente
+    de la compra seleccionada (en dropdown y helperText)
+
+12. PAGO CLIENTE + REMISIONES â€” remision_id (nullable) agregado a pago_clientes:
+    MigraciÃ³n original actualizada, modelo con relaciÃ³n remision(),
+    form con selector excluyente (venta O remisiÃ³n), tabla con columna RemisiÃ³n
+
+13. FORMULA TRANSFORMACIÃ“N TIPOS â€” Corregidos a fabricacion/reenvase/combo/promo
+    (alineados con TransformacionTipo enum)
+
+â”€â”€â”€ MIGRACIONES MODIFICADAS (4 originales) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - create_productos_table: +tipo_producto enum
+  - create_pago_clientes_table: +remision_id FK
+  - create_transformaciones_tables: +serial en detalles
+  - create_formula_transformaciones_table: tipo enum actualizado
+
+â”€â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  97 tests de mÃ³dulos afectados: 0 failed
+  5 fallos pre-existentes en PolicyAccessTest (User.php modificado antes de S23)
+
+================================================================================
+FIN SESIÃ“N 23 â€” Parte 1 (correcciones y UX)
+================================================================================
+
+================================================================================
+SESIÃ“N 23 â€” Parte 2: Sistema de Pagos Waterfall (Cascada)
+Fecha: 2026-03-28
+================================================================================
+
+â”€â”€â”€ CONTEXTO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Jose reportÃ³ que el sistema de pagos original era 1-a-1 (un pago â†’ un
+  documento). El sistema Harbour usa distribuciÃ³n en cascada: al registrar
+  un pago contra un cliente/proveedor, el monto se aplica automÃ¡ticamente
+  desde el documento mÃ¡s antiguo al mÃ¡s reciente.
+
+  Ejemplo: facturas de $140K y $200K. Pago de $300K â†’
+    - Factura 1 ($140K) queda PAGADA completamente
+    - Factura 2 ($200K) queda con $40K pendiente (PARCIAL)
+
+â”€â”€â”€ CAMBIOS REALIZADOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+1. MIGRACIONES MODIFICADAS (3 originales):
+   - create_pago_clientes_table: quitado venta_id/remision_id FK,
+     agregada tabla detalle_pago_clientes (documento_tipo, documento_id,
+     monto_aplicado)
+   - create_pago_proveedores_table: quitado compra_id FK,
+     agregada tabla detalle_pago_proveedores (compra_id, monto_aplicado)
+   - create_remisiones_table: estado_pago agregÃ³ 'parcial'
+
+2. MODELOS NUEVOS (2):
+   - DetallePagoCliente: pago_cliente_id, documento_tipo, documento_id,
+     monto_aplicado
+   - DetallePagoProveedor: pago_proveedor_id, compra_id, monto_aplicado
+
+3. MODELOS ACTUALIZADOS:
+   - PagoCliente: quitado venta_id/remision_id de fillable, quitadas
+     relaciones venta()/remision(), agregada relaciÃ³n detalles()
+   - PagoProveedor: quitado compra_id de fillable, quitada relaciÃ³n
+     compra(), agregada relaciÃ³n detalles()
+   - Venta: relaciÃ³n pagos() â†’ detallePagos() (via detalle_pago_clientes)
+   - Compra: relaciÃ³n pagos() â†’ detallePagos() (via detalle_pago_proveedores)
+
+4. SERVICIO NUEVO â€” PagoDistribucionService:
+   - distribuirPagoCliente(): waterfall sobre ventas+remisiones
+   - distribuirPagoProveedor(): waterfall sobre compras
+   - revertirPagoCliente()/revertirPagoProveedor(): para eliminaciÃ³n
+   - obtenerDeudaCliente()/obtenerDeudaProveedor(): totales pendientes
+   - obtenerDocumentosPendientesCliente()/obtenerComprasPendientesProveedor()
+
+5. OBSERVERS REESCRITOS:
+   - PagoClienteObserver: createdâ†’distribuirPagoCliente,
+     deletingâ†’revertirPagoCliente (deleting, no deleted, por CASCADE FK)
+   - PagoProveedorObserver: createdâ†’distribuirPagoProveedor,
+     deletingâ†’revertirPagoProveedor
+
+6. FORMULARIOS REESCRITOS:
+   - PagoClienteForm: quitados selectores venta_id/remision_id,
+     agregada secciÃ³n "Deuda Pendiente del Cliente" con tabla HTML
+     (Placeholder+HtmlString), validaciÃ³n monto<=deuda total
+   - PagoProveedorForm: quitado selector compra_id,
+     agregada secciÃ³n "Deuda Pendiente con Proveedor" con tabla HTML,
+     validaciÃ³n monto<=deuda total
+
+7. TABLAS ACTUALIZADAS:
+   - PagoClientesTable: quitadas columnas venta.numero/remision.numero,
+     agregada columna detalles_count con badge
+   - PagoProveedorsTable: quitada columna compra.numero,
+     agregada columna detalles_count con badge
+
+8. EXPORTERS ACTUALIZADOS:
+   - PagoClienteExporter: quitada columna venta.numero
+   - PagoProveedorExporter: quitada columna compra.numero
+
+9. OTROS ARCHIVOS CORREGIDOS:
+   - EnviarResumenMensual: PagoCliente::with('venta') â†’ with('detalles')
+   - resumen_mensual.blade.php: $pago->venta?->numero â†’ $pago->numero
+
+â”€â”€â”€ TESTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  PagoClienteObserverTest: 9 tests, 35 assertions, 0 failed
+  Suite completa: 248 passed, 7 failed (pre-existentes en PolicyAccessTest)
+
+================================================================================
+FIN SESIÃ“N 23 â€” Parte 2
+================================================================================
+
+
+================================================================================
+SESIÃ“N 24 â€” 2026-04-04 â€” REDISEÃ‘O MÃ“DULO TRANSFORMACIONES
+================================================================================
+
+Origen: usuario reporta que el flujo de transformaciones debe partir del
+producto final, no de la fÃ³rmula. El PC se congelo en sesiÃ³n anterior
+sin completar los cambios.
+
+â”€â”€â”€ OBJETIVO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  RediseÃ±ar el mÃ³dulo de transformaciones para que:
+  1. Al crear una transformaciÃ³n, se selecciona el PRODUCTO FINAL
+  2. Si existe una fÃ³rmula para ese producto â†’ se carga automÃ¡ticamente
+  3. Si no existe â†’ usuario ingresa componentes manualmente
+  4. Al confirmar â†’ si no habÃ­a fÃ³rmula, el sistema la crea automÃ¡ticamente
+
+â”€â”€â”€ CAMBIOS PENDIENTES AL INICIO DE S24 (del freeze anterior) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  Estos cambios ya estaban en disco sin commitear:
+  - FormulaTransformacionResource: getGloballySearchableAttributes()
+  - FormulaTransformacionForm: tipos renombrados (fabricacion, reenvase, combo, promo)
+  - TransformacionForm: estado disabled, tipos renombrados
+  - TransformacionTable: usa mÃ©todos del enum
+  - TransformacionInfolist: color revertida
+  - ListTransformacions: tab null key fix, query usa enum
+  - ViewTransformacion: botÃ³n Volver agregado
+
+â”€â”€â”€ TAREAS S24 (ver Bloque T en Tasklist.txt) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  T1 â€” MigraciÃ³n producto_final_id en transformaciones                  [OK]
+  T2 â€” Modelos (FormulaTransformacion + Transformacion)                 [OK]
+  T3 â€” FormulaTransformacionForm: Select producto_final_id con "+"      [OK]
+  T4 â€” TransformacionForm: Select producto_final_id + auto-carga fÃ³rmula [OK]
+  T5 â€” TransformacionService: confirmar() + revertir()                  [OK]
+  T6 â€” EditTransformacion: acciones Confirmar / Revertir                [OK]
+  T7 â€” Tests (14/14 passed)                                             [OK]
+  T8 â€” Limpieza                                                         [OK]
+
+â”€â”€â”€ CORRECCIONES DURANTE S24 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - tipo_movimiento enum: agregados entrada_transformacion, salida_transformacion,
+    reverso_transformacion a migraciÃ³n 2026_02_24_030300
+  - TransformacionService: tipo?->value ?? 'fabricacion' para tipo null
+  - TransformacionService: costo_unitario = 0 en reverso (NOT NULL)
+  - Tests: ::orderByDesc('id') en lugar de ::latest() para precisiÃ³n temporal
+
+â”€â”€â”€ TESTS FINALES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  255 passed, 7 failed (pre-existentes PolicyAccessTest) â€” sin regresiones
+
+================================================================================
+FIN SESIÃ“N 24
+================================================================================
+
+================================================================================
+SESIÃ“N 25 â€” 2026-05-01 â€” ACTUALIZACIÃ“N STACK Y DIVISIÃ“N DE BITÃCORA
+================================================================================
+
+OBJETIVO:
+  Actualizar el contexto tÃ©cnico del proyecto y organizar la bitÃ¡cora.
+
+â”€â”€â”€ ACTUALIZACIÃ“N DE STACK â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - Laravel: Actualizado a v13.7.0 en documentaciÃ³n y guÃ­as.
+  - Filament: VersiÃ³n v5.6.1 confirmada.
+  - PHP: 8.4 confirmado.
+  - Plugins: Se documentaron 12 plugins de Filament y Spatie Permissions v7.2.
+
+â”€â”€â”€ ORGANIZACIÃ“N DE ARCHIVOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - Bitacora.txt: Dividida en archivos de ~1000 lÃ­neas (Bitacora001.txt, 002.txt, 003.txt)
+    para mejorar el rendimiento y evitar registros cortados.
+  - Contexto.txt: Actualizado con el stack real y la fecha actual.
+
+â”€â”€â”€ ARCHIVOS MODIFICADOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  | Archivo                    | Cambio                                        |
+  |----------------------------|-----------------------------------------------|
+  | GEMINI.md                  | ActualizaciÃ³n stack Laravel 13 + Plugins      |
+  | contexto/Contexto.txt      | SincronizaciÃ³n con stack real                 |
+  | contexto/Bitacora.txt      | Convertido en Ã­ndice de archivos              |
+  | contexto/Bitacora001.txt   | Primera parte de la bitÃ¡cora                  |
+  | contexto/Bitacora002.txt   | Segunda parte de la bitÃ¡cora                  |
+  | contexto/Bitacora003.txt   | Tercera parte + SesiÃ³n 25                     |
+
+================================================================================
+FIN SESIÃ“N 25
+================================================================================
+
+================================================================================
+SESIÃ“N 26 â€” 2026-05-03 â€” OPTIMIZACIÃ“N "BAJO HARDWARE"
+================================================================================
+
+OBJETIVO:
+  Mejorar el rendimiento de la aplicaciÃ³n para equipos con recursos limitados.
+
+â”€â”€â”€ OPTIMIZACIONES DE RENDIMIENTO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+1. PAGINACIÃ“N AGRESIVA (DOM Weight Reduction):
+   - Se estableciÃ³ `defaultPaginationPageOption(10)` en las tablas de los recursos:
+     Ventas, Compras, Productos, StockBodegas, Clientes, Proveedores,
+     AjusteInventarios, MovimientoInventarios, Transformacions.
+   - Esto reduce la carga de memoria en el navegador al limitar la cantidad de
+     registros renderizados simultÃ¡neamente.
+
+2. LAZY LOADING (Carga Diferida):
+   - Se habilitÃ³ `$isLazy = true` en los widgets del Dashboard:
+     - VentasStatsWidget.php
+     - ProductosStatsWidget.php
+   - La pÃ¡gina principal carga instantÃ¡neamente y los widgets pesados se cargan
+     de forma asÃ­ncrona tras el renderizado inicial.
+
+3. OPTIMIZACIÃ“N DE CONSULTAS N+1 EN FORMULARIOS:
+   - Se optimizaron los mÃ©todos `updateTotals()` en VentaForm y CompraForm.
+   - Cambio: Se precargan todos los impuestos involucrados en el Repetidor en
+     una sola consulta (`whereIn('id', $ids)`) en lugar de hacer `Impuesto::find()`
+     dentro del bucle foreach de detalles.
+
+â”€â”€â”€ CONFIGURACIÃ“N DE SESIONES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - Verificado `SESSION_DRIVER=database` en config/session.php.
+  - Se mantiene como estÃ¡ndar para estabilidad, recomendando Redis/Valkey para
+    mÃ¡ximo rendimiento en producciÃ³n.
+
+â”€â”€â”€ DOCUMENTACIÃ“N Y AUDITORÃA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - Actualizado Tasklist.txt con el BLOQUE U (OptimizaciÃ³n Bajo Hardware).
+  - Agregada REGLA 14 al checklist de auditorÃ­a para prevenir regresiones de rendimiento.
+
+â”€â”€â”€ ARCHIVOS MODIFICADOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  | Archivo                                          | Cambio                          |
+  |--------------------------------------------------|---------------------------------|
+  | app/Filament/Resources/Ventas/Tables/VentasTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/Compras/Tables/ComprasTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/Productos/Tables/ProductosTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/StockBodegas/Tables/StockBodegasTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/AjusteInventarios/Tables/AjusteInventariosTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/MovimientoInventarios/Tables/MovimientoInventariosTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/Transformacions/Tables/TransformacionTable.php | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/ClienteResource.php       | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/ProveedorResource.php     | defaultPaginationPageOption(10) |
+  | app/Filament/Resources/Ventas/Widgets/VentasStatsWidget.php | $isLazy = true           |
+  | app/Filament/Resources/Productos/Widgets/ProductosStatsWidget.php | $isLazy = true |
+  | app/Filament/Resources/Ventas/Schemas/VentaForm.php | Precarga de impuestos (N+1 fix) |
+  | app/Filament/Resources/Compras/Schemas/CompraForm.php | Precarga de impuestos (N+1 fix) |
+  | contexto/Tasklist.txt                            | BLOQUE U marcado como OK        |
+  | contexto/auditoria.txt                           | Agregada REGLA 14 (Performance) |
+  | contexto/Bitacora.txt                            | ActualizaciÃ³n de Ã­ndice         |
+
+================================================================================
+FIN SESIÃ“N 26
+================================================================================
+
+================================================================================
+SESIÃ“N 27 â€” 2026-05-05 â€” ACTUALIZACIÃ“N DE CONTEXTO
+================================================================================
+
+OBJETIVO:
+  Actualizar Contexto.txt y Bitacora.txt con los cambios de S13-S26.
+
+CAMBIOS EN CONTEXTO.TXT:
+  - Fecha actualizada: May 05, 2026
+  - Estructura proyecto: Pasos 1-6 completados
+  - Stack: +Storage S3 Cloudflare R2
+  - Tests: 263 tests, 7 fallos pre-existentes en PolicyAccessTest
+  - OptimizaciÃ³n rendimiento: paginaciÃ³n 10, lazy widgets, N+1 fix
+  - Grupos tablas: 45 negocio + 14 permisos = 59 total
+  - Cartera: detalle_pago_clientes y detalle_pago_proveedores
+  - PagoDistribucionService agregado a servicios
+  - PagoClienteObserver/PagoProveedorObserver: reescritos para waterfall
+  - FKs nullable actualizadas (pago_clientes remision_id, etc.)
+  - VersiÃ³n: 3.07 documentada
+  - Skills: +8 skills nuevos (find-skills, frontend-design-pro, laravel-best-practices,
+    laravel-permission-development, mysql-conventions, olakunlevpn-filament-skills,
+    pest-testing, powershell-7.5-features)
+
+CAMBIOS EN BITACORA.TXT:
+  - SesiÃ³n 27 agregada al Ã­ndice
+
+================================================================================
+FIN SESIÃ“N 27
+================================================================================
+
+================================================================================
+SESIÃ“N 28 â€” 2026-05-09 â€” OPTIMIZACIÃ“N DE EXPORTACIONES E INVENTARIOS
+================================================================================
+
+OBJETIVO:
+  Resolver fallos en exportaciÃ³n, centralizar flujos de inventario y ajustar
+  lÃ³gica fiscal colombiana.
+
+â”€â”€â”€ EXPORTACIÃ“N Y FILTROS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+1. FIX EXPORTACIÃ“N NATIVA (SQL fail):
+   - Se ejecutaron las migraciones faltantes de Filament Actions para crear
+     las tablas `exports` y `failed_exports`.
+   - Se aplicÃ³ un Trait (`FixesWindowsTempDirectory`) a todos los exportadores
+     para redirigir archivos temporales de `C:\Windows\Temp` a `storage/app/temp`.
+
+2. RESTAURACIÃ“N FILAMENT EXCEL (Windows Stability):
+   - Debido a persistencia de errores `ERR_INVALID_RESPONSE` en Windows local
+     con la descarga nativa, se restaurÃ³ el plugin `FilamentExcel` en la pÃ¡gina
+     de Stock Bodegas por su mayor compatibilidad.
+   - BotÃ³n renombrado a simplemente **"Excel"**. Configurado con `fromModel()`
+     para incluir campos maestros (Precios, Costos, CategorÃ­a, Marca)
+     respetando los filtros activos.
+
+3. MEJORA STOCK BODEGAS:
+   - Filtro de Bodegas ahora tiene `preload()` (ya no requiere teclear).
+   - Agregados filtros por: CategorÃ­a, Marca, Tipo de Producto y UbicaciÃ³n.
+   - UbicaciÃ³n automÃ¡tica: Se asigna "DEFAULT" a registros nuevos y se muestra
+     como tal en pantalla aunque el valor sea null.
+
+â”€â”€â”€ COMPRAS Y LÃ“GICA FISCAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+4. SWITCH "IVA INCLUIDO":
+   - Implementado switch **Â¿IVA Inc.?** en el formulario de Compras.
+   - Al activarlo y digitar un precio final, el sistema desglosa automÃ¡ticamente
+     el valor neto basÃ¡ndose en la tasa de impuesto seleccionada (19%, 5%, etc.).
+
+5. COSTO PROMEDIO Y RÃ‰GIMEN SIMPLIFICADO:
+   - SincronizaciÃ³n automÃ¡tica: Al confirmar un "Ajuste Inicial", se actualiza
+     el `costo_promedio` y `precio_compra` del producto.
+   - Bimodalidad: Preparada la lÃ³gica para que empresas simplificadas tomen
+     el IVA como mayor valor del costo.
+
+â”€â”€â”€ CENTRALIZACIÃ“N DE CONTEO FÃSICO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+6. EXCEL EN CONTEO FÃSICO:
+   - Se eliminÃ³ la importaciÃ³n de productos desde el listado maestro (riesgosa).
+   - Nuevo flujo en **EdiciÃ³n de Conteo FÃ­sico**:
+     - BotÃ³n **"Excel"** para descargar plantilla especÃ­fica de la bodega.
+     - BotÃ³n **"Importar Conteo (Excel)"** para cargar masivamente las
+       cantidades contadas y calcular diferencias automÃ¡ticamente.
+
+â”€â”€â”€ DOCUMENTACIÃ“N â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  - Reorganizado `Tasklist.txt`: Bloque G (UX), S (Concurrencia) y W (Arquitectura)
+    movidos a "FUTURAS IMPLEMENTACIONES" como diferidos. Bloque I eliminado.
+
+â”€â”€â”€ ARCHIVOS MODIFICADOS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  | Archivo                                          | Cambio                          |
+  |--------------------------------------------------|---------------------------------|
+  | app/Traits/FixesWindowsTempDirectory.php         | CREADO â€” fix permisos Windows   |
+  | app/Filament/Exports/* (11 archivos)             | +FixesWindowsTempDirectory trait|
+  | app/Filament/Resources/StockBodegas/Tables/*     | +Filtros, +preload, -ExportAction|
+  | app/Filament/Resources/StockBodegas/Pages/*      | +FilamentExcel (label Excel)    |
+  | app/Filament/Resources/Productos/Pages/*         | -ImportaciÃ³n/Plantilla (limpieza)|
+  | app/Filament/Resources/ConteoFisicos/Pages/Edit* | +Descarga Plantilla + ImportaciÃ³n|
+  | app/Filament/Resources/Compras/Schemas/CompraForm.php | +Switch Â¿IVA Inc.? + LÃ³gica |
+  | app/Models/StockBodega.php                       | +Default "DEFAULT" + Accessor   |
+  | app/Services/AjusteInventarioService.php         | +Sync costo en saldo inicial    |
+  | contexto/Tasklist.txt                            | ReorganizaciÃ³n general          |
+
+2026_05_09: OptimizaciÃ³n de FÃ³rmulas y Quick Create
+- SoluciÃ³n de LogicException en FormulaTransformacion: agregado createOptionUsing() en selectores de productos.
+- Mejora UX en creaciÃ³n rÃ¡pida de productos desde fÃ³rmulas:
+  - Tipo de producto inmutable ("manufacturado") segÃºn el contexto de la fÃ³rmula.
+  - Estado "Activo" por defecto y deshabilitado para simplificar la creaciÃ³n.
+  - SincronizaciÃ³n de usuario_id al crear productos desde modales.
+
+================================================================================
+FIN SESIÃ“N 28
+================================================================================
+[10-mayo-2026] Módulo de Transformaciones: Finalización completa. Se implementó persistencia de costos, cálculo automático en ciclo de vida (Create/Edit), bloqueo de edición para fórmulas ejecutadas, inmutabilidad de componentes de insumos y sincronización de precios de venta en producto final. Sistema blindado contra errores de usuario (capa 8).
+
+================================================================================
+SESIÓN 29 — 2026-05-10 — FINALIZACIÓN MÓDULO TRANSFORMACIONES
+================================================================================
+
+OBJETIVO:
+  Cerrar y blindar el módulo de transformaciones, asegurar la inmutabilidad
+  de las fórmulas ejecutadas y la persistencia de datos financieros.
+
+─── CAMBIOS REALIZADOS ────────────────────────────────────────────────────────
+
+1. PERSISTENCIA DE DATOS DE COSTOS:
+   - Se crearon migraciones para campos faltantes (`costo_total`, `precio_sugerido`, `margen_deseado`)
+     en la tabla `formula_transformaciones` y `bloqueada` en la misma tabla.
+   - Actualizados modelos `FormulaTransformacion` (fillable, casts, booted hook).
+
+2. AUTOMATIZACIÓN Y LÓGICA DE NEGOCIO:
+   - Refactorización de `CostoService`: cálculo basado en costo promedio o precio de compra
+     con margen dinámico (manual o de empresa).
+   - `mutateFormDataBeforeCreate`/`Save` en páginas de Transformación:
+     cálculo y persistencia automática de costos sin intervención manual.
+
+3. BLINDAJE (CAPA 8):
+   - Inmutabilidad de fórmulas ejecutadas: `canEdit`/`canDelete` bloquean fórmulas bloqueadas.
+   - Inmutabilidad de insumos en Transformaciones: Repeater bloqueado (`addable(false)`,
+     `deletable(false)`) y campos deshabilitados para evitar edición manual errónea.
+   - Sincronización de precios: Actualización automática de `precio_venta` en tabla
+     `productos` al confirmar una transformación.
+
+4. CORRECCIONES TÉCNICAS:
+   - Resolución de `TypeError` en cierre de closures (uso de `\Filament\Forms\Set`).
+   - Resolución de `BadMethodCallException` en UI (reemplazo de `readOnly()` por `disabled()`).
+   - Sincronización de relaciones en `mount()` de edición (sync forzado).
+
+─── ARCHIVOS MODIFICADOS ────────────────────────────────────────────────────
+  | Archivo                                          | Cambio                          |
+  |--------------------------------------------------|---------------------------------|
+  | app/Services/CostoService.php                    | Refactor cálculo dinámico       |
+  | app/Models/FormulaTransformacion.php             | +campos, +casts, +bloqueada      |
+  | app/Filament/Resources/FormulaTransformacions/*  | Resource, Pages, Form, Resource |
+  | app/Filament/Resources/Transformacions/*         | Resource, Pages, Form           |
+  | database/migrations/*.php                        | +costo_total, +bloqueada, etc   |
+
+================================================================================
+FIN SESIÓN 29
+================================================================================

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="">
+    <title>Punto de Venta - SIGAINV</title>
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link href="css/styles.css" rel="stylesheet">
+</head>
+<body>
+
+    <!-- LOGIN VIEW -->
+    <div id="login-view" class="d-flex align-items-center justify-content-center">
+        <div class="login-card bg-white p-4">
+            <div class="text-center mb-4">
+                <i class="fas fa-shield-halved fa-3x text-primary mb-3"></i>
+                <h3 class="fw-bold">SIGAINV</h3>
+                <p class="text-muted small">Ingrese sus credenciales para continuar</p>
+            </div>
+            <div id="login-error" class="alert alert-danger d-none small py-2"></div>
+            <form id="login-form">
+                <div class="mb-3">
+                    <label class="form-label small">Correo electrónico</label>
+                    <input type="email" id="login-email" class="form-control" placeholder="admin@sigainv.test" required autofocus>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small">Contraseña</label>
+                    <input type="password" id="login-password" class="form-control" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">
+                    <i class="fas fa-sign-in-alt me-2"></i>Acceder al Sistema
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- POS WRAPPER -->
+    <div id="pos-wrapper" class="d-none">
+        <!-- HEADER -->
+        <header class="pos-header fixed-top d-flex align-items-center px-3">
+            <div class="d-flex align-items-center gap-3 flex-fill">
+                <div class="d-flex align-items-center gap-2">
+                    <img id="header-logo" src="" alt="" style="height:32px; display:none" onerror="this.style.display='none'">
+                    <i class="fas fa-box-open text-success me-1"></i>
+                    <span id="header-empresa" class="fw-bold text-white small">SIGAINV</span>
+                </div>
+                <button id="btn-documento" class="btn btn-sm btn-outline-light">
+                    <i class="fas fa-file-invoice me-1"></i>Factura
+                </button>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span id="turno-indicator" class="small text-white-50 me-2">
+                    <i class="fas fa-cash-register me-1"></i>Sin turno
+                </span>
+                <button id="btn-abrir-turno" class="btn btn-sm btn-outline-success d-none">
+                    <i class="fas fa-play-circle"></i>
+                </button>
+                <button id="btn-cerrar-turno" class="btn btn-sm btn-outline-warning d-none">
+                    <i class="fas fa-calculator"></i>
+                </button>
+                <button id="btn-cliente" class="btn btn-sm btn-outline-secondary client-select-btn" title="Seleccionar cliente">
+                    <i class="fas fa-user-circle me-1"></i><span>Consumidor Final</span>
+                </button>
+                <span class="small text-white-50 border-start border-secondary ps-2 ms-1" id="header-user"></span>
+                <button id="btn-logout" class="btn btn-sm btn-outline-light" title="Cerrar sesión">
+                    <i class="fas fa-power-off"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- MAIN CONTENT -->
+        <div class="main-content" style="margin-top: var(--header-height);">
+            <!-- Products Section -->
+            <div class="products-section">
+                <div class="products-toolbar d-flex gap-2 align-items-center">
+                    <div class="input-group input-group-sm flex-fill">
+                        <span class="input-group-text bg-dark text-white border-secondary"><i class="fas fa-search"></i></span>
+                        <input type="text" id="buscar-producto" class="form-control form-control-sm bg-dark text-white border-secondary" placeholder="Buscar producto (código, nombre, barra)..." autocomplete="off">
+                    </div>
+                    <button id="btn-refresh" class="btn btn-sm btn-outline-secondary" title="Actualizar">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
+                <div class="products-grid-container custom-scrollbar">
+                    <div id="lista-productos"></div>
+                </div>
+            </div>
+
+            <!-- Cart Section -->
+            <div class="cart-section">
+                <div class="cart-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0 fw-bold"><i class="fas fa-shopping-cart me-2"></i>DETALLE VENTA</h6>
+                    <span class="badge bg-primary rounded-pill" id="cart-count">0</span>
+                </div>
+                <div class="memory-bar">
+                    <button id="memoria-1" class="memory-btn" title="Memoria 1">P1</button>
+                    <button id="memoria-2" class="memory-btn" title="Memoria 2">P2</button>
+                    <button id="memoria-3" class="memory-btn" title="Memoria 3">P3</button>
+                    <button id="memoria-4" class="memory-btn" title="Memoria 4">P4</button>
+                    <button id="btn-guardar-memoria" class="btn btn-sm btn-outline-success ms-1" title="Guardar memoria actual">
+                        <i class="fas fa-save"></i>
+                    </button>
+                </div>
+                <div class="cart-items custom-scrollbar" id="carrito-items">
+                    <div class="text-center text-muted p-4">
+                        <i class="fas fa-shopping-basket fa-2x mb-2"></i><br>Carrito vacío
+                    </div>
+                </div>
+                <div class="cart-totals">
+                    <div class="total-line">
+                        <span>Subtotal</span>
+                        <span id="tbl-subtotal">$0</span>
+                    </div>
+                    <div class="total-line">
+                        <span>Descuento</span>
+                        <span id="tbl-descuento" class="text-danger">$0</span>
+                    </div>
+                    <div class="total-line">
+                        <span>Impuestos</span>
+                        <span id="tbl-impuestos">$0</span>
+                    </div>
+                    <div class="input-group input-group-sm mb-2">
+                        <input type="number" id="descuento-global-input" class="form-control bg-dark text-white border-secondary" placeholder="Desc. global $" min="0" step="100">
+                        <button id="btn-aplicar-descuento" class="btn btn-outline-info btn-sm"><i class="fas fa-check"></i></button>
+                    </div>
+                    <div class="total-line total">
+                        <span>TOTAL A PAGAR</span>
+                        <span id="tbl-total">$0</span>
+                    </div>
+                </div>
+                <div class="cart-actions">
+                    <button id="btn-pagar" class="btn btn-success flex-fill"><i class="fas fa-check-double me-1"></i>PROCESAR PAGO</button>
+                    <button id="btn-vaciar" class="btn btn-outline-danger"><i class="fas fa-trash"></i></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- FOOTER -->
+        <footer class="pos-footer fixed-bottom">
+            <span><i class="far fa-clock me-1"></i><span id="footer-clock"></span></span>
+            <span>
+                <i class="fas fa-network-wired me-1"></i>Online
+                <span class="ms-3 text-muted">v1.0.0</span>
+            </span>
+        </footer>
+    </div>
+
+    <!-- MODAL: Apertura de Turno -->
+    <div class="modal fade" id="modal-apertura" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cash-register me-2"></i>Apertura de Turno</h5>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small">Caja</label>
+                        <select id="apertura-caja" class="form-select" required></select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Bodega (origen de stock)</label>
+                        <select id="apertura-bodega" class="form-select">
+                            <option value="">Sin bodega</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small">Saldo Inicial</label>
+                        <input type="number" id="apertura-saldo" class="form-control" value="500000" min="0" step="1000">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-iniciar-turno" class="btn btn-success w-100 fw-bold">
+                        <i class="fas fa-play-circle me-1"></i>Iniciar Turno
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Cierre de Turno -->
+    <div class="modal fade" id="modal-cierre" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-calculator me-2"></i>Cierre de Turno</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="cierre-resumen"></div>
+                    <div class="small text-muted mb-2" id="cierre-ventas-count"></div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Efectivo Contado (Saldo Real)</label>
+                        <input type="number" id="cierre-saldo-inicial" class="form-control" min="0" step="100">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-cerrar-turno-confirmar" class="btn btn-success w-100 fw-bold">
+                        <i class="fas fa-check-double me-1"></i>Cerrar y Cuadrar Caja
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Seleccionar Cliente -->
+    <div class="modal fade" id="modal-cliente" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-user me-2"></i>Seleccionar Cliente</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="input-group mb-3">
+                        <span class="input-group-text bg-dark text-white border-secondary"><i class="fas fa-search"></i></span>
+                        <input type="text" id="buscar-cliente" class="form-control bg-dark text-white border-secondary" placeholder="Buscar por nombre o documento..." autocomplete="off">
+                    </div>
+                    <div class="client-list list-group list-group-flush" id="lista-clientes"></div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-nuevo-cliente" class="btn btn-outline-success w-100">
+                        <i class="fas fa-plus-circle me-1"></i>Registrar Nuevo Cliente
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Nuevo Cliente -->
+    <div class="modal fade" id="modal-nuevo-cliente" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-user-plus me-2"></i>Nuevo Cliente</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="form-nuevo-cliente">
+                        <div class="mb-2">
+                            <label class="form-label small">Nombre *</label>
+                            <input type="text" id="nuevo-cliente-nombre" class="form-control" required>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-4">
+                                <label class="form-label small">Tipo Doc.</label>
+                                <select id="nuevo-cliente-tipo-doc" class="form-select">
+                                    <option value="CC">CC</option>
+                                    <option value="CE">CE</option>
+                                    <option value="TI">TI</option>
+                                    <option value="NIT">NIT</option>
+                                </select>
+                            </div>
+                            <div class="col-8">
+                                <label class="form-label small">Documento *</label>
+                                <input type="text" id="nuevo-cliente-documento" class="form-control" required>
+                            </div>
+                        </div>
+                        <div class="row mb-2">
+                            <div class="col-6">
+                                <label class="form-label small">Teléfono</label>
+                                <input type="text" id="nuevo-cliente-telefono" class="form-control">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">Correo</label>
+                                <input type="email" id="nuevo-cliente-email" class="form-control">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-guardar-cliente" class="btn btn-success w-100 fw-bold">
+                        <i class="fas fa-check me-1"></i>Guardar Cliente
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Pago -->
+    <div class="modal fade" id="modal-pago" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-cash-register me-2"></i>Procesar Pago</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="text-center mb-3">
+                        <span class="text-muted small">Total a pagar</span>
+                        <div class="h2 text-success fw-bold" id="pago-total">$0</div>
+                    </div>
+
+                    <div id="pago-lista" class="payment-list mb-3"></div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-7">
+                            <label class="form-label small">Forma de pago</label>
+                            <select id="pago-forma" class="form-select"></select>
+                        </div>
+                        <div class="col-5">
+                            <label class="form-label small">Monto</label>
+                            <div class="input-group">
+                                <input type="number" id="pago-monto" class="form-control" placeholder="Monto" min="0.01" step="1000">
+                                <button id="btn-agregar-pago" class="btn btn-outline-primary"><i class="fas fa-plus"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="pago-efectivo-section" class="d-none mb-3">
+                        <label class="form-label small">Efectivo Recibido</label>
+                        <input type="number" id="pago-efectivo-recibido" class="form-control form-control-lg" placeholder="0">
+                        <div class="mt-2">
+                            <span class="text-muted small">CAMBIO</span>
+                            <div id="cambio-display">$0</div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-between border-top border-secondary pt-2">
+                        <span>Total pagado</span>
+                        <span class="fw-bold" id="pago-total-pagado">$0</span>
+                    </div>
+                    <div class="d-flex justify-content-between">
+                        <span>Faltante</span>
+                        <span id="pago-faltante">$0</span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="pago-confirmar-btn" class="btn btn-success w-100 fw-bold" disabled>
+                        <i class="fas fa-check-circle me-1"></i>CONFIRMAR PAGO
+                        <span class="ms-2 small" id="pago-total-label">$0</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- App scripts -->
+    <script src="js/ui.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

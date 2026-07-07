@@ -1,0 +1,116 @@
+Integración POS en sigaInv (PLANIFICACIÓN)
+> **Referencia funcional (NO se toca):** `f:\www\web\sigaPos` (sigaPos.test) — versión 1.1.0, PHP 8.4 vanilla, Front Controller. Es producto independiente y FUNCIONAL; se mantiene intacto y se usa solo como guía de comportamiento.
+> **Objetivo:** que `sigainv.test/pos` funcione **MEJOR** que `sigaPos` — usar esa carpeta como punto de comparación durante toda la implementación. Ambos productos coexisten; el usuario decide cuál usar.
+> **NO se reemplaza `sigaPos`**. Se construye `sigainv/pos` como módulo nuevo en sigainv (Laravel 13 + Filament v5). Comparten la misma base de datos, por lo que la numeración es unificada (objetivo clave: minimizar errores de consecutivoss duplicados entre ambos sistemas).
+> Reglas inquebrantables:
+> - Cero migraciones nuevas en sigainv.
+> - Cero cambios a services/modelos/enums existentes; solo AGREGAR métodos nuevos.
+> - `f:\www\web\sigaPos` NO se modifica. Sirve solo como referencia funcional.
+> - El frontend de `sigainv/pos` se CREA desde cero (HTML+JS+Bootstrap 5) en `sigainv/public/pos/`. No se copia ni se mueve código de `sigaPos`. El JS se escribe contra la API Laravel + Sanctum desde el inicio.
+> URL: `sigainv.test/pos`. Auth: Sanctum unificado (mismo backend que admin).
+> Numeración: siempre desde la tabla `numeraciones` con `lockForUpdate()` (compatible con lo que usa `sigaPos`; consecutivoss compartidos).
+> Cálculo IVA: Factura desglosado, Remisión 0. Vueltos: solo info visual, no se registran.
+> Sobrepago en no-efectivo: no permitido. Pago mixto: solo si el otro cubre exacto el déficit.
+> Anulación/Devoluciones en POS: NO existen. Edición: solo carrito antes de finalizar.
+
+### Sesión 1 — Bridge methods y capabilities nuevas
+- [ ] Crear `app/Services/TurnoService.php` con métodos `abrir`, `cerrar` (recalcula desde `MovimientoCaja`), `getActivo`
+- [ ] Agregar método estático `crearPos()` en `app/Services/VentaService.php` (factura con IVA desglosado, reusa `NumeracionService`, `StockService`, `PagoClienteService`, `CostoPromedioService`, trait `RegistraAuditoria`)
+- [ ] Agregar método estático `crearPos()` en `app/Services/RemisionService.php` (sin IVA, reusa mismos services)
+- [ ] Crear `app/Services/ClienteService.php` con método `crearRapido` (5 campos requeridos: nombre, tipo_documento, documento, telefono, correo; defaults: estado=activo, portal_acceso=sin_acceso). **NOTA**: evaluar primero si `app/Filament/Forms/ClienteQuickCreate.php` (Tarea 7) cubre el caso — si la lógica difiere solo en defaults/validaciones, el Service es wrapper; si difiere en esencia, Service dedicado. Decisión al implementar.
+- [ ] Crear `config/pos.php` con flags: `pago_mixto_habilitado`, `imagenes_path`. NO incluir `anulacion.modo` ni `requiere_supervisor` (la regla inquebrantable es "Anulación/Devoluciones en POS: NO existen"; si en el futuro se habilita, se introducen los flags en ese momento). `cors_origins` se configura en `config/cors.php` (Laravel estándar), NO en `config/pos.php`.
+- [ ] Crear `app/Http/Middleware/EnsurePosAccess.php` (valida rol `vendedor` o `administrador` + estado `activo`)
+- [ ] Registrar alias `pos.activo` en `bootstrap/app.php`
+- [ ] Tests Pest en `tests/Feature/Pos/Services/` desde esta sesión (no tinker — convención del proyecto):
+  - `TurnoServiceTest` — abrir/cerrar/getActivo
+  - `VentaServiceCrearPosTest` — crea venta, descuenta stock, registra pagos, registra auditoría `pos.crear`
+  - `RemisionServiceCrearPosTest` — crea remisión sin IVA, descuenta stock, registra auditoría
+  - `ClienteServiceCrearRapidoTest` — defaults correctos, validación de 5 campos, documento único
+
+### Sesión 2 — Controllers, FormRequests, Resources y rutas
+- [ ] Crear `app/Http/Controllers/Pos/AuthController.php` (login, logout, me, config inicial)
+- [ ] Crear `app/Http/Controllers/Pos/ProductoController.php` (búsqueda con eager load de impuesto, unidad, stockBodegas; LIKE sobre nombre, código, código_barras, nombre_comun; top 200)
+- [ ] Crear `app/Http/Controllers/Pos/StockController.php` (read-only por bodega)
+- [ ] Crear `app/Http/Controllers/Pos/ClienteController.php` (index con búsqueda por documento/nombre + store con `ClienteService::crearRapido`)
+- [ ] Crear `app/Http/Controllers/Pos/BodegaController.php`, `FormaPagoController.php`, `EmpresaController.php`, `ImagenController.php` (todos read-only)
+- [ ] Crear `app/Http/Controllers/Pos/TurnoController.php` (activo, apertura, cierre, ventas del turno con desglose por forma de pago)
+- [ ] Crear `app/Http/Controllers/Pos/VentaController.php` (store → `VentaService::crearPos`; validaciones preventivas de numeración y turno)
+- [ ] Crear `app/Http/Controllers/Pos/RemisionController.php` (store → `RemisionService::crearPos`)
+- [ ] Crear `app/Http/Controllers/Pos/CajaController.php` (ingreso/egreso manual vía `CajaService`)
+- [ ] Crear 5 FormRequests nuevos: `PosAbrirTurnoRequest`, `PosCerrarTurnoRequest`, `PosCrearVentaRequest`, `PosCrearRemisionRequest` (ya existe `PosCrearClienteRequest`)
+- [ ] Crear 6 API Resources: `ProductoResource`, `ClienteResource`, `VentaResource`, `RemisionResource`, `TurnoResource`, `ImagenResource` (mismo shape JSON que consume el JS actual)
+- [ ] Configurar grupo de rutas en `routes/api.php` con prefijo `pos/api` y middleware `auth:sanctum` + `pos.activo` (endpoint `config` público dentro del grupo)
+
+### Sesión 3 — Frontend, welcome y CORS
+- [ ] **Crear desde cero** `sigainv/public/pos/` (HTML+JS+CSS+images), usando `sigaPos/public/*` como **referencia funcional** del comportamiento, NO como código fuente a mover. Decisión consciente: el JS antiguo de sigaPos no es compatible con la API Laravel/Sanctum; reescribir evita arrastrar inconsistencias.
+- [ ] Estructura de `sigainv/public/pos/`:
+  - `index.html` (punto de entrada único, similar al de `sigaPos` en UX)
+  - `js/` con módulos: `api.js` (Sanctum Bearer + base URL `/pos/api`), `auth.js`, `productos.js`, `carrito.js`, `pagos.js`, `turno.js`, `ui.js`
+  - `css/` con Bootstrap 5 + Font Awesome 6 (mismas versiones que `sigaPos` para consistencia visual, sin build step)
+  - `images/` con logos/iconos
+- [ ] `js/api.js` (núcleo de comunicación):
+  - `baseURL = '/pos/api'`
+  - Header `Authorization: Bearer ${token}` (token Sanctum en `localStorage`)
+  - Helper `api.get/post/put/delete` con manejo centralizado de errores 401 (limpia token y redirige a login) y 422 (muestra validación)
+  - `api.login(email, password)` → POST `/pos/api/auth/login` → guarda token
+  - `api.logout()` → POST `/pos/api/auth/logout` → limpia token
+  - `api.config()` → GET `/pos/api/config` → datos iniciales (público, sin token)
+- [ ] Agregar tercer botón "Punto de Venta" en `resources/views/welcome.blade.php` entre "Portal Clientes" y "Acceder" (estilo secundario como Portal Clientes, no destacado en verde)
+- [ ] Decisión de deployment del frontend (afecta CORS):
+  - **Caso A**: mismo dominio (`sigainv.test/pos`) — NO requiere configurar CORS, el navegador trata el frontend como mismo origen
+  - **Caso B**: subdominio dedicado (`pos.sigainv.test` o `pos.sigainv.com`) — SÍ requiere `config/cors.php` con `paths => ['pos/api/*']` y origins específicos
+  - Decisión a documentar en Bitacora antes de implementar Sesión 3
+- [ ] Si Caso B: configurar `config/cors.php` con `paths` y `allowed_origins` específicos
+- [ ] Validar end-to-end manual contra el comportamiento de `sigaPos` (paralelo, mismo BD): login POS, apertura de turno, venta contado con vuelto, remisión, cierre de turno, cuadre. Comparar resultados entre ambos sistemas para validar paridad.
+
+### Sesión 4 — Tests Pest y deprecación de sigaPos
+- [ ] Test `tests/Feature/Pos/AuthTest.php` (login OK, login fallido, sin rol → 403)
+- [ ] Test `tests/Feature/Pos/VentaContadoTest.php` (crea venta, descuenta stock, crea PagoCliente por forma_pago, registra MovimientoCaja ingreso)
+- [ ] Test `tests/Feature/Pos/VentaParcialTest.php` (pago parcial con checkbox, saldo pendiente, estado_pago=PARCIAL)
+- [ ] Test `tests/Feature/Pos/RemisionContadoTest.php` (crea remisión sin IVA, con pagos, descuenta stock)
+- [ ] Test `tests/Feature/Pos/VentaSinNumeracionTest.php` (rechaza con 422 + mensaje claro)
+- [ ] Test `tests/Feature/Pos/RemisionSinNumeracionTest.php` (rechaza con 422)
+- [ ] Test `tests/Feature/Pos/TurnoAperturaCierreTest.php` (abre con saldo 100k, vende 50k contado, cierra con 150k → ok)
+- [ ] Test `tests/Feature/Pos/TurnoCierreConDiferenciaTest.php` (diferencia se registra sin maquillar)
+- [ ] Test `tests/Feature/Pos/ClienteRapidoTest.php` (5 campos requeridos, `portal_acceso=sin_acceso`, documento único)
+- [ ] Test `tests/Feature/Pos/PagoMixtoTest.php` (efectivo + transferencia cubriendo déficit exacto, no-efectivo no puede exceder)
+- [ ] Período de gracia: `sigainv.test/pos` y `sigaPos.test` conviven. Mismo BD, numeración compartida — una venta creada en cualquiera incrementa el contador global. Documentar en Bitacora cómo se valida la coexistencia (no race conditions, no duplicación de consecutivoss).
+
+### Sesión 5 — Auditoría funcional, bitácora y verificación final
+- [ ] Auditoría del módulo POS (análogo a Tarea 6 del admin):
+  - [ ] Permisos del POS en `RoleSeeder` (vendedor + administrador ya los tienen; verificar acceso a `pos.api.*`)
+  - [ ] CORS según decisión de Sesión 3 (caso A o B)
+  - [ ] Sanctum tokens: confirmar uso de `HasApiTokens` en `User`, tabla `personal_access_tokens` ya existe
+  - [ ] Trait `RegistraAuditoria` cubre: `pos.crear` (venta/remisión), `pos.turno.apertura`, `pos.turno.cierre`, `pos.caja.ingreso`, `pos.caja.egreso`, `pos.cliente.crear`
+  - [ ] Logs: nivel `info` para operaciones normales, `warning` para stocks bajos, `error` para fallos. NUNCA loguear passwords, tokens Sanctum completos, ni datos personales del cliente
+  - [ ] Verificar que middleware `pos.activo` rechaza correctamente Users inactivos o sin rol
+- [ ] Documentar en `Bitacora*.txt` (no esperar al cierre):
+  - Decisiones arquitectónicas: Sanctum unificado, sin anulación POS, vueltos solo visual, pago mixto exacto
+  - Mapping de endpoints POS con método HTTP, payload esperado, respuesta
+  - Diferencias con la versión `sigaPos` (lo que se mejoró, lo que se conservó)
+- [ ] Verificación final de las 5 sesiones:
+  - [ ] `vendor/bin/pint --dirty --format agent` — passed
+  - [ ] `php artisan test --compact --filter=Pos` — pasan todos
+  - [ ] `php artisan test --compact` — regresión (375 + N nuevos)
+  - [ ] Grep regresión:
+    - `Select-String 'crearPos' app/Services` → solo en VentaService y RemisionService
+    - `Select-String 'pos.activo' app/Http` → solo en middleware y alias
+    - NO debe haber passwords/tokens en logs
+  - [ ] Manual E2E documentado: login → turno → 3 ventas (contado, parcial, mixta) → remisión → cierre → cuadre
+
+### Reglas críticas a respetar durante la implementación
+- [ ] **NO** crear migraciones nuevas
+- [ ] **NO** modificar services/modelos/enums existentes; solo AGREGAR métodos nuevos
+- [ ] Tests Pest desde Sesión 1 (NO tinker — convención del proyecto)
+- [ ] Usar `NumeracionService::obtenerSiguienteNumero()` con `lockForUpdate()` para ventas y remisiones
+- [ ] Usar `StockService::validateStock()` con `lockForUpdate()` antes de descontar
+- [ ] Trait `RegistraAuditoria` con `accion='pos.crear'`, `accion='pos.turno.apertura'`, `accion='pos.turno.cierre'`, etc.
+- [ ] `declare(strict_types=1)` en cada archivo nuevo
+- [ ] Ejecutar `./vendor/bin/pint --dirty --format agent` después de cada archivo nuevo
+- [ ] Tests Pest con `RefreshDatabase` y `database/testing.sqlite` para cada flujo crítico
+- [ ] Vueltos son SOLO info visual en la UI del POS (no se persisten en PagoCliente ni en MovimientoCaja)
+- [ ] Pago mixto: `suma_no_efectivo` debe ser exactamente `total - suma_efectivo`; no se permite sobrepago en no-efectivo
+- [ ] NO incluir `anulacion.modo` ni `requiere_supervisor` en `config/pos.php` (regla "Anulación en POS: NO existe")
+
+---
+

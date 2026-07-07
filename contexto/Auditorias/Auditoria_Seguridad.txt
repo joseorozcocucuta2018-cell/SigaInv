@@ -1,0 +1,106 @@
+================================================================================
+  CHECKLIST DE AUDITORIA DE SEGURIDAD
+  Stack: Laravel 13 + Filament v5 + PHP 8.4 + MySQL
+  Plugins: filament/*, spatie/permission, dompdf, OpenSpout,
+           filament-auto-logout, filament-edit-profile, html2media,
+           filament-daterangepicker, filament-currency, filament-pdf-viewer
+Patron: Resources + Services + PdfController + ExcelController
+   Database drivers: MySQL (default) / SQLite
+   Ultima actualizacion: 2026-05-03
+================================================================================
+
+OBJETIVO
+--------
+Detectar vulnerabilidades de seguridad ANTES de desplegar.
+NO es auditoria de codificacion (eso es Auditoria.txt).
+Enfocada en la superficie real de ataque de este patron:
+plugins de terceros sin version pin, campos ocultos en formularios,
+autorizacion insuficiente en Controllers, y mass assignment en User.
+
+PRIORIDADES
+-----------
+  [C] Critico — Explotable directamente.          BLOQUEA deploy sin excepcion.
+  [A] Alto    — Explotable con condiciones.        BLOQUEA deploy.
+  [M] Medio   — Exposicion indirecta o latente.   Registrar, evaluar caso a caso.
+
+ESTADOS
+-------
+  [ ] Pendiente   [OK] Aprobado   [FAIL] Fallo   [N/A] No aplica
+
+
+================================================================================
+REGLAS
+================================================================================
+
+--------------------------------------------------------------------------------
+REGLA 1 — PLUGINS SIN VERSION PIN — SUPERFICIE DE ATAQUE  [C]  BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+Un composer update puede introducir una version con vulnerabilidad conocida.
+[ ] Sin CVEs conocidos en paquetes actualizados en este ciclo (composer audit)
+
+--------------------------------------------------------------------------------
+REGLA 2 — dompdf — enable_php DESACTIVADO  [C]            BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+[ ] enable_php=false en PdfController y config/dompdf.php
+[ ] Sin {!! !!} en datos que provienen de la base de datos o del usuario
+
+--------------------------------------------------------------------------------
+REGLA 4 — MASS ASSIGNMENT EN User  [C]                    BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+[ ] 'activo' y roles NO estan en $fillable del modelo User
+[ ] password tiene cast 'hashed'
+
+--------------------------------------------------------------------------------
+REGLA 5 — FILAMENT: Hidden::make Y FILEUPLOAD  [C]         BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+[ ] Sin Hidden::make para costos, usuario_id o estados
+[ ] FileUpload tiene ->maxSize() y ->rules(['mimes:...']) con validación real
+
+--------------------------------------------------------------------------------
+REGLA 16 — AUTORIZACIÓN Y PROTECCIÓN IDOR  [C]           BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+No basta con tener el permiso; el usuario debe tener acceso al registro específico.
+[ ] Verificación de propiedad (IDOR): ¿Puede el usuario acceder a un ID ajeno?
+[ ] Scoping de queries: Uso de where('usuario_id', ...) si aplica
+
+--------------------------------------------------------------------------------
+REGLA 17 — SEGURIDAD DE SESIONES Y COOKIES  [A]          BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+[ ] Driver de sesión: preferir `database` o `redis` sobre `file` en prod.
+[ ] Atributos de cookie: `secure => true` y `http_only => true` en session.php.
+
+--------------------------------------------------------------------------------
+REGLA 18 — PROTECCIÓN CSRF Y CSP  [A]                    BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+[ ] Middleware `VerifyCsrfToken` activo en rutas web/panel.
+[ ] Cabeceras de seguridad básicas configuradas.
+
+--------------------------------------------------------------------------------
+REGLA 19 — PROTECCIÓN DE CREDENCIALES Y SECRETOS  [C]    BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+[ ] Sin API Keys escritas directamente en el código.
+[ ] .env fuera del control de versiones.
+
+--------------------------------------------------------------------------------
+REGLA 20 — ESCANEO DE DEPENDENCIAS (COMPOSER AUDIT)  [A]  BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+[ ] Ejecutar `composer audit` antes de cada deploy.
+
+
+================================================================================
+PASO 1 — VERIFICACION CRUZADA
+================================================================================
+
+  [ ] Protección IDOR                ↔  queries scopeadas                (R16)
+  [ ] Seguridad de Sesiones          ↔  drivers y expiración             (R17)
+  [ ] Protección CSRF/CSP            ↔  middlewares y cabeceras          (R18)
+  [ ] Protección de Secretos         ↔  código limpio de keys            (R19)
+
+
+================================================================================
+PASO 2 — RESUMEN DEL CICLO
+================================================================================
+...
+================================================================================
+FIN DEL CHECKLIST DE SEGURIDAD
+================================================================================

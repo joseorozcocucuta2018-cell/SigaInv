@@ -1,0 +1,851 @@
+==========================================================================================
+SESION 59 — 2026-06-07 — MIGRACIÓN DEL PORTAL A CLIENTE AUTHENTICATABLE (TAREA 8)
+==========================================================================================
+
+OBJETIVO:
+  Ejecutar Tarea 8 del Tasklist maestro: migrar el portal /clientes de
+  un User con rol 'cliente' a la tabla `clientes` directamente como
+  Authenticatable. 15 sub-tareas (8.01–8.15) ejecutadas y verificadas.
+
+  Decisión arquitectónica confirmada con el usuario 2026-06-06: el portal
+  usa `clientes` como Authenticatable directo, no un User en `users`.
+
+--- 8.01 — MIGRACIÓN ADD: COLUMNAS DE AUTH EN CLIENTES ------------------------
+
+  Archivo: database/migrations/2026_06_06_000001_add_auth_columns_to_clientes.php
+  Columnas (todas nullable para no romper los 2 clientes existentes):
+  ├─ password              string(255)  Hash::make
+  ├─ remember_token        string(100)
+  ├─ email_verified_at     timestamp
+  ├─ password_changed_at   timestamp    null = debe cambiar
+  └─ portal_last_login_at  timestamp
+  Down: dropColumn de las 5 columnas
+  NO se tocó la migración principal 0001_01_01_000006 (inmutable por
+  convención regla 13). La columna user_id_portal queda en la tabla
+  (nullable) sin uso activo.
+
+--- 8.02 — CLIENTE IMPLEMENTS AUTHENTICATABLE + FILAMENTUSER + HASNAME ------
+
+  Archivo: app/Models/Cliente.php
+  Cambios estructurales:
+  ├─ extends Authenticatable (Illuminate\Foundation\Auth\User)
+  ├─ implements AuthenticatableContract, FilamentUser, HasName
+  ├─ use Notifiable (requerido por ->databaseNotifications() del panel)
+  ├─ $hidden += ['password', 'remember_token']
+  ├─ $casts += [
+  │     'email_verified_at'    => 'datetime',
+  │     'password'             => 'hashed',
+  │     'password_changed_at'  => 'datetime',
+  │     'portal_last_login_at' => 'datetime',
+  │ ]
+  └─ 6 métodos del contrato Authenticatable (getAuthIdentifierName,
+     getAuthIdentifier, getAuthPasswordName, getAuthPassword,
+     getRememberToken, setRememberToken, getRememberTokenName)
+
+  Métodos de dominio añadidos:
+  ├─ tieneAccesoPortal(): bool       — password seteado + estado=ACTIVO
+  ├─ debeCambiarPassword(): bool     — password_changed_at === null
+  ├─ aplicarDescuento(float): float  — precio_venta * (1 - descuento/100)
+  ├─ canAccessPanel(Panel): bool     — solo panel 'clientes' si portal
+  │                                    _acceso=ACTIVO + estado=ACTIVO
+  └─ getFilamentName(): string       — Filament\Models\Contracts\HasName
+                                       retorna nombre (no 'name')
+
+  Eliminado: relación Cliente::portalUser() BelongsTo (ya no se usa).
+
+--- 8.03 — CONFIGURAR GUARD 'CLIENTE' + PROVIDER 'CLIENTES' ------------------
+
+  Archivo: config/auth.php
+  ├─ guards.cliente    => driver session, provider clientes
+  ├─ providers.clientes => eloquent, model App\Models\Cliente
+  └─ passwords.clientes => provider clientes, table password_reset_tokens
+  El guard 'web' y provider 'users' quedan intactos (siguen siendo el
+  default para /admin).
+
+--- 8.04 — CLIENTEPANELPROVIDER USA AUTHGUARD 'CLIENTE' ---------------------
+
+  Archivo: app/Providers/Filament/ClientePanelProvider.php
+  ├─ ->authGuard('cliente')  (en vez de 'web')
+  └─ Página CambiarPassword registrada en ->pages([...])
+
+--- 8.05 + 8.06 — MIGRACIÓN DE 2 CLIENTES EXISTENTES (SEEDER ONE-SHOT) -----
+
+  Archivo: database/seeders/ClientesPortalSeeder.php (NUEVO, no en
+  DatabaseSeeder — one-shot, el usuario lo corre manual).
+  Lógica:
+  ├─ Itera clientes con portal_acceso=activo
+  ├─ Genera password temporal (Str::random(12))
+  ├─ Hashea password + asigna remember_token
+  ├─ Marca password_changed_at=null (fuerza cambio en primer login)
+  ├─ Encola PortalCredencialesMail al email del cliente
+  └─ Revoca rol 'cliente' de Users (idempotente, conserva otros roles)
+  Usuario corre: php artisan db:seed --class=ClientesPortalSeeder
+  Decisión 8.06 = opción B (revocar rol, no eliminar Users) — reversible.
+
+--- 8.07 — REESCRIBIR LOGIN DEL PANEL /CLIENTES -----------------------------
+
+  Archivo: app/Filament/Cliente/Pages/Auth/Login.php
+  authenticate():
+  ├─ Busca Cliente por email
+  ├─ Valida estado=ACTIVO (mensaje: "Tu cuenta está inactiva")
+  ├─ Valida tieneAccesoPortal (password seteado)
+  ├─ Hash::check de la password
+  └─ Auth::guard('cliente')->login($cliente, $remember)
+      + actualiza portal_last_login_at
+  getRedirectUrl():
+  ├─ Si password_changed_at === null → cambiar-password
+  └─ Si no → cliente-dashboard
+  Eliminada validación de UserEstado (ya no aplica; ahora cliente->estado).
+
+--- 8.08 — USER::CANACCESSPANEL RECHAZA STAFF EN 'CLIENTES' ----------------
+
+  Archivo: app/Models/User.php
+  canAccessPanel():
+  ├─ Eliminada rama 'clientes' (ya no aplica)
+  ├─ 'clientes' => false (explícito, defensivo)
+  └─ 'admin' se mantiene con roles originales
+  Eliminado: User::hasPortalAccess() privado, User::cliente() HasOne
+  (relación huérfana), imports HasOne y PortalAccesoEnum.
+
+--- 8.09 — HOOK POST-AUTH: REDIRIGIR SI PASSWORD TEMPORAL ------------------
+
+  Cubierto en 8.07 (getRedirectUrl del Login). Se añadió también
+  middleware global al panel (ver 8.10).
+
+--- 8.10 — PÁGINA CAMBIARPASSWORD + MIDDLEWARE FORZAR CAMBIO --------------
+
+  Archivos nuevos:
+  ├─ app/Filament/Cliente/Pages/CambiarPassword.php
+  │   Form: current_password (visible solo si password existe) +
+  │         new password + confirmación
+  │   save(): valida current con Hash::check, hashea nuevo, marca
+  │           password_changed_at=now, redirige al dashboard
+  │   Visible en sidebar "Cuenta → Cambiar Contraseña"
+  │
+  └─ app/Http/Middleware/ClienteForzarCambioPassword.php
+      Si password_changed_at === null Y ruta no es cambiar-password/login/
+      logout → redirect a cambiar-password. Evita bucle excluyendo rutas
+      permitidas por nombre.
+
+  Archivos modificados:
+  ├─ resources/views/filament/cliente/pages/cambiar-password.blade.php
+  │   Blade con <x-filament-panels::page> + <x-filament::section> +
+  │   form wire:submit="save"
+  └─ app/Providers/Filament/ClientePanelProvider.php
+      Registra CambiarPassword en ->pages() y
+      ClienteForzarCambioPassword en ->authMiddleware([...])
+
+  Decisión: se descartó inicialmente usar un middleware EnsureClientePortal
+  Activo (que ya teníamos en sesión anterior). Filament v5 Authenticate
+  middleware (vendor/filament/filament/src/Http/Middleware/Authenticate.php)
+  aborte 403 en entorno no-local si el modelo no implementa FilamentUser.
+  Por eso la verificación de estado/portal_acceso se movió a
+  Cliente::canAccessPanel() (modelo) en vez de un middleware separado.
+
+--- 8.11 — MAILABLE PORTALCREDENCIALESMAIL + VISTA --------------------------
+
+  Archivos nuevos:
+  ├─ app/Mail/PortalCredencialesMail.php
+  │   implements ShouldQueue
+  │   uses Queueable, SerializesModels
+  │   constructor(public Cliente $cliente, public string $passwordPlano)
+  │   envelope() con Empresa::actual()->nombre_comercial
+  │   content() → view('emails.portal.credenciales')
+  └─ resources/views/emails/portal/credenciales.blade.php
+      Saludo + email acceso + password temporal (strong, copy-to-clipboard)
+      + link al portal + advertencia "cambie al primer ingreso" + footer
+      corporativo.
+
+--- 8.12 — SECCIÓN "ACCESO AL PORTAL" EN CLIENTERESOURCE -------------------
+
+  Archivo: app/Filament/Resources/ClienteResource.php
+  Sección "Acceso al Portal" añadida con:
+  ├─ Select portal_acceso (editable)
+  ├─ Placeholder estado_portal: "🟢 Activo" / "🟡 Pendiente cambio" / "⚪ Sin acceso"
+  ├─ Placeholder password_changed_at (diffForHumans)
+  ├─ Placeholder portal_last_login_at (diffForHumans)
+  └─ headerAction "Generar contraseña de acceso":
+      ├─ requiresConfirmation
+      ├─ Hashea password aleatorio, marca password_changed_at=null
+      ├─ Encola PortalCredencialesMail
+      └─ Notification::success al admin
+  Visible solo si portal_acceso=ACTIVO.
+
+--- 8.13 — ELIMINAR DEPENDENCIA DE USER::CLIENTE Y USER_ID_PORTAL ---------
+
+  Cambios:
+  ├─ Cliente::$fillable — quitado 'user_id_portal'
+  ├─ ClienteFactory — sin 'user_id_portal'
+  ├─ Cliente::portalUser() BelongsTo — eliminada
+  ├─ ClienteResource — sin uso de portalUser()
+  ├─ PdfController::puedeVerDocumento — ahora detecta:
+  │   $user instanceof User → usa permisos staff (can())
+  │   $user instanceof Cliente → comparación directa por cliente_id
+  └─ routes/web.php — grupos pdf.* y excel.* ahora usan ['auth:web,cliente']
+     (en vez de solo ['auth']) para que el guard 'cliente' acepte al Cliente
+  └─ List*Portal pages y ClienteStatsWidget — usan Auth::guard('cliente')
+  └─ Factura/Remision/Cotizacion PortalResource::canAccess — usa
+     Auth::guard('cliente')->check()
+  └─ user_id_portal queda en la tabla (nullable) y en la migración
+     principal (no se borra la columna) — solo se quita de fillable.
+
+--- 8.14 — REESCRIBIR TESTS DEL PORTAL -------------------------------------
+
+  Archivo: tests/Feature/Portal/PortalAccesoTest.php (REEMPLAZADO)
+  Helpers:
+  ├─ crearClienteConAcceso($portal, $estado, $password, $temporal=false)
+  │   Cuarto parámetro bool $temporal controla password_changed_at.
+  │   - $temporal=true → password_changed_at NO se setea (null en DB)
+  │   - $temporal=false → password_changed_at=now() (password definitivo)
+  │   El password se pasa en crudo porque el cast 'hashed' hashea
+  │   automáticamente (pasar Hash::make producía doble-hash).
+  ├─ crearBodega()
+  ├─ crearVentaParaCliente(int, VentaEstado) — usa Venta::factory
+  ├─ crearRemisionParaCliente(int, RemisionEstado) — Remision::create directo
+  └─ crearCotizacionParaCliente(int, CotizacionEstado) — Cotizacion::create directo
+
+  Cobertura nueva (25 tests en 4 describes):
+  ├─ Acceso al panel:
+  │   ├─ cliente activo con portal_acceso=activo puede acceder → 200
+  │   ├─ cliente con portal_acceso=sin_acceso → 403
+  │   ├─ cliente con portal_acceso=pendiente → 403
+  │   ├─ cliente con estado=inactivo → 403
+  │   ├─ cliente con password null → 403
+  │   ├─ User staff intentando /clientes → 403
+  │   ├─ anónimo intentando /clientes → redirect login
+  │   └─ Auth::guard('cliente')->check() funciona
+  ├─ Aislamiento de listados (livewire):
+  │   ├─ Cliente ve solo SUS facturas/remisiones/cotizaciones
+  │   ├─ Facturas en BORRADOR NO visibles
+  │   └─ Cliente sin ventas ve 0 filas
+  ├─ Seguridad de PDFs (HTTP):
+  │   ├─ Cliente puede descargar PDFs propios
+  │   ├─ Cliente NO puede descargar PDFs ajenos → 403
+  │   ├─ Cliente NO puede descargar PDFs de borradores
+  │   └─ Anónimo NO puede acceder a PDFs
+  └─ Flujo de cambio de contraseña:
+      ├─ password temporal redirige a cambiar-password
+      ├─ password definitivo accede al dashboard
+      ├─ Auth::guard(cliente)->check() funciona
+      └─ página CambiarPassword se renderiza para cliente autenticado
+
+  tests/Feature/Database/MigrationsTest.php — actualizado con las 5
+  nuevas columnas en la aserción de la tabla clientes.
+
+--- 8.15 — VERIFICACIÓN FINAL -----------------------------------------------
+
+  ├─ vendor/bin/pint --dirty --format agent          → passed
+  ├─ php artisan test --compact --filter=Portal      → 25 passed (34 assertions)
+  ├─ php artisan test --compact                      → 380 passed, 2 skipped,
+  │   0 failed (760 assertions, 251.87s)
+  ├─ Grep regresión:
+  │   ├─ 'user_id_portal' en app/                    → 0 resultados
+  │   ├─ 'User::cliente' en app/                     → 0 resultados
+  │   ├─ 'portalUser()' en app/                      → 0 resultados
+  │   └─ 'Authenticatable' en app/Models/Cliente.php → 1 resultado
+  └─ Manual: queda pendiente de ejecución por el usuario
+      (php artisan migrate + seeder + login real en /clientes)
+
+--- DECISIONES CLAVE DE LA SESIÓN -------------------------------------------
+
+  1. Cliente implementa FilamentUser (con canAccessPanel) en vez de
+     middleware EnsureClientePortalActivo. Filament v5 Authenticate
+     middleware aborte 403 en entorno no-local si el modelo no
+     implementa FilamentUser (verificado en
+     vendor/filament/filament/src/Http/Middleware/Authenticate.php).
+
+  2. Rutas PDF/Excel: ['auth:web,cliente'] para que el guard 'cliente'
+     acepte al Cliente. ['auth'] solo acepta el guard web.
+
+  3. PdfController::puedeVerDocumento detecta $user instanceof User
+     para staff (usa can()) y Auth::guard('cliente')->user() instanceof
+     Cliente para clientes (comparación directa por cliente_id, sin
+     permisos).
+
+  4. Helper de test crearClienteConAcceso pasa password en crudo (no
+     Hash::make) porque el cast 'hashed' del modelo lo hashea
+     automáticamente. Pasar Hash::make producía doble-hash y los
+     tests de login fallaban.
+
+  5. Mailable con ShouldQueue (no bloquea), password plano como
+     propiedad pública para la vista. La vista no loguea el password.
+
+  6. Seeder ClientesPortalSeeder NO se agrega a DatabaseSeeder — es
+     one-shot que el usuario corre manual con
+     `php artisan db:seed --class=ClientesPortalSeeder`.
+
+  7. user_id_portal queda en la tabla (nullable) y en la migración
+     principal (no se borra la columna) — solo se quita de fillable
+     y se elimina la relación BelongsTo.
+
+  8. Cliente::getFilamentName() requerido para evitar TypeError en
+     Filament\FilamentManager::getUserName() (que llama
+     $user->getAttributeValue('name') por defecto — no existe en
+     Cliente que tiene 'nombre').
+
+  9. Cliente usa Notifiable trait porque el panel tiene
+     ->databaseNotifications() que llama notifications() en el user.
+
+  10. ClienteForzarCambioPassword middleware fuerza redirect a
+      cambiar-password cuando password es temporal — añadido al
+      ->authMiddleware() del panel. Authenticate middleware ya filtra
+      no autenticados, así que solo se ejecuta para clientes logueados.
+
+  11. Helper crearClienteConAcceso usa bool $temporal (no DateTime|null)
+      para distinguir "password definitivo" de "password temporal".
+      La versión anterior con $passwordChangedAt=null colapsaba a now()
+      con `?? now()` y rompía el test de "password temporal".
+
+  12. CambiarPassword NO overridea render() — usa $view property y deja
+      que BasePage::render() use el layout filament-panels por defecto
+      (layouts/index). Si se overridea render() sin ->layout() Livewire
+      cae en `layouts::app` que no está registrado en este proyecto.
+
+--- BUGS DESCUBIERTOS Y ARREGLADOS DURANTE 8.15 -----------------------------
+
+  1. getUserName() TypeError — Filament esperaba atributo 'name',
+     Cliente tiene 'nombre'. Fix: implements HasName + getFilamentName().
+
+  2. layouts::app not defined — CambiarPassword render() custom sin
+     layout. Fix: remover render() y usar $view property.
+
+  3. Call to undefined method Cliente::notifications() — el panel
+     databaseNotifications() lo requiere. Fix: use Notifiable trait.
+
+  4. Test "password temporal" no redirigía — el helper usaba
+     $passwordChangedAt ?? now() que colapsaba null a now(). Fix:
+     cambiar firma a bool $temporal con default false.
+
+--- ARCHIVOS DE LA SESIÓN (resumen) ---------------------------------------
+
+  Nuevos (8):
+    - database/migrations/2026_06_06_000001_add_auth_columns_to_clientes.php
+    - database/seeders/ClientesPortalSeeder.php
+    - app/Mail/PortalCredencialesMail.php
+    - app/Http/Middleware/ClienteForzarCambioPassword.php
+    - app/Filament/Cliente/Pages/CambiarPassword.php
+    - resources/views/emails/portal/credenciales.blade.php
+    - resources/views/filament/cliente/pages/cambiar-password.blade.php
+    - (eliminado en sesión anterior) app/Filament/Pages/CambiarPassword.php
+
+  Reescritos (1):
+    - tests/Feature/Portal/PortalAccesoTest.php
+
+  Modificados (8):
+    - app/Models/Cliente.php
+    - app/Models/User.php
+    - app/Providers/Filament/ClientePanelProvider.php
+    - app/Filament/Cliente/Pages/Auth/Login.php
+    - app/Filament/Resources/ClienteResource.php
+    - app/Http/Controllers/PdfController.php
+    - routes/web.php
+    - tests/Feature/Database/MigrationsTest.php
+    - config/auth.php
+    - database/factories/ClienteFactory.php
+
+  Docs (2):
+    - contexto/Contexto.txt (v3.17.1 → v3.18.0)
+    - contexto/Tasklists/Tasklist.txt (8.01–8.15 [OK], Tarea 8 a completadas)
+    - contexto/Bitacora/Bitacora007.txt (este archivo)
+
+--- VERSION ---------------------------------------------------------------
+
+   v3.17.1 (config/app.php) → v3.18.0
+   (Tarea 8 completa: portal migrado a Cliente Authenticatable, +25 tests
+   del portal, 0 regresiones en 380 tests totales, 4 bugs descubiertos
+   y arreglados durante la verificación)
+
+  GitHub: NO se hizo commit/push/tag (instrucción del usuario — sesión 59)
+
+--- PENDIENTES PARA SIGUIENTE SESIÓN --------------------------------------
+
+  - Replicar el patrón de Tarea 7 a PortalProveedores (no existe aún)
+  - Evaluar tests browser de Filament (smoke testing de los modales
+    de Infolist, CambiarPassword y la acción PrintAction)
+  - Tarea 6 sigue abierta: enums TipoPersonaEnum, RegimenTributarioEnum,
+    AuditoriaOperacionEnum + casts pendientes
+  - Considerar eliminación de columna user_id_portal (queda nullable
+    en la tabla, no se usa) — tarea futura de limpieza
+  - Validar manualmente con php artisan migrate + seeder + login real
+    en /clientes (pasos 8.15 sección Manual)
+
+==========================================================================================
+SESION 60 — 2026-06-09 — CAJAS Y BANCOS: FLUJO DE MOVIMIENTOS (TIPO → ORIGEN)
+==========================================================================================
+OBJETIVO:
+  Reordenar formularios de MovimientoCaja y MovimientoBanco para que el
+  usuario seleccione primero el TIPO de movimiento y después el ORIGEN,
+  filtrando correctamente por saldo disponible.
+
+CAMBIOS:
+
+  1. MovimientoCajaForm:
+     - Reorden: tipo → caja_id (origen) → destino_id → monto → ...
+     - Ingreso → todas las cajas activas.
+     - Egreso/Traslado/Consignación → solo cajas con saldo_actual > 0.
+     - destino_id visible/requerido solo para traslado (Caja Destino)
+       y consignación (Banco Destino).
+     - Se eliminó el uso de MovimientoCajaTipo::class en options por
+       strings hardcodeados (compatible con comparaciones $get('tipo')).
+
+  2. MovimientoBancoForm:
+     - Reorden: tipo → banco_id (origen) → destino_id → monto → ...
+     - Depósito → todos los bancos activos.
+     - Retiro/Transferencia → solo bancos con saldo_actual > 0.
+     - destino_id visible/requerido para transferencia (Banco Destino)
+       y retiro (Caja Destino).
+
+  3. CajaCategoria enum:
+     - Agregados TRASLADO_CAJA y TRASLADO_BANCO.
+     - tipoMovimiento() ahora incluye 'traslado'.
+
+  4. CajaService::trasladarACaja():
+     - Destino ahora registra categoria='traslado_caja' (antes null).
+
+  Pruebas: 25 tests pasados (76 assertions, 20s).
+  Pint: sin errores.
+
+--- VERSION ---------------------------------------------------------------
+   v3.18.0 → v3.19.0
+   (Sesión 60: formularios de movimientos reordenados, filtro por saldo,
+   nuevas categorías de traslado en enum)
+
+--- PENDIENTES ------------------------------------------------------------
+   - Verificar comportamiento de filtro por saldo en producción.
+   - Validar visualmente destino_id en consignación (Banco Destino).
+
+ ==========================================================================================
+ FIN SESION 60
+ ==========================================================================================
+
+ ==========================================================================================
+ SESION 61 — 2026-06-10 — LIMPIEZA DEUDA TÉCNICA: CIUDADES + CONTEXTO
+ ==========================================================================================
+ OBJETIVO:
+   Resolver los 2 items pendientes reales de deuda técnica identificados
+   en Contexto.txt tras auditoría cruzada con Tasklist (Tareas 6-10 completadas).
+
+ CAMBIOS:
+
+   1. CundinamarcaSeeder.php — Eliminadas 3 ciudades mal asignadas + 1 duplicado:
+      - VILLAVICENCIO → ya existe en MetaSeeder.php (línea 67)
+      - IBAGUE → ya existe en TolimaSeeder.php como IBAGUÉ (línea 41)
+      - GINEBRA → ya existe en ValleDelCaucaSeeder.php (línea 40)
+      - ZIPAQUIRÁ duplicado eliminado (líneas 67 y 125 → una sola)
+      Total ciudades en Cundinamarca: 126 → 122
+
+   2. Contexto.txt — Actualizado a v3.19.0 (fecha Jun 10, 2026):
+      - Sección DEUDA TÉCNICA reescrita reflejando estado real
+      - 8 items marcados como ✅ RESUELTOS (Tasklist Tareas 6-10)
+      - 2 items ⚠️ PENDIENTES REALES documentados (ciudades + contexto)
+      - Eliminadas referencias obsoletas (migración turnos, casts faltantes,
+        forms hardcodeados, enums huérfanos, carpetas, seeder, auditoría)
+
+ VERIFICACIÓN:
+   - php artisan db:seed --class=CiudadesSeeder → ejecuta sin errores
+   - vendor/bin/pint --dirty --format agent → sin errores
+   - No hay migraciones involucradas (solo datos seeders)
+
+ --- ARCHIVOS DE LA SESIÓN ---
+   Modificados (2):
+     - database/seeders/ciudades/CundinamarcaSeeder.php
+     - contexto/Contexto.txt
+   Docs (1):
+     - contexto/Bitacora/Bitacora007.txt (este archivo)
+
+ --- VERSION ---
+    v3.19.0 (sin cambio de versión — solo corrección datos y docs)
+
+ --- PENDIENTES ---
+    - Validar manual: php artisan migrate:fresh --seed y verificar ciudades
+    - Revisar seeders de Antioquia si tiene duplicados/cruces similares
+
+==========================================================================================
+SESION 62 — 2026-06-11 — MODO DE CÁLCULO DE PRECIO EN FÓRMULAS
+===========================================================================================
+
+OBJETIVO:
+  Agregar modo de cálculo flexible (margen / manual) a las fórmulas de transformación
+  para que cada tipo (fabricacion, reenvase, combo, promo) tenga el pricing adecuado.
+
+CAMBIO PRINCIPAL:
+  - Nuevo enum `TipoCalculoPrecio` (app/Enums/) con casos `margen` y `manual`.
+  - Nueva columna `tipo_calculo_precio` en `formula_transformaciones` (enum DB).
+  - Incorporada en migración principal 2026_02_28_500000. Migración ADD generada y
+    eliminada (regla 13).
+  - Defaults por tipo:
+    * fabricacion → margen (30%)
+    * reenvase   → manual
+    * combo      → manual
+    * promo      → manual
+  - Margen default por tipo: fabricacion=30%, reenvase=45%, combo=15%, promo=10%.
+
+ARCHIVOS MODIFICADOS:
+  - app/Enums/TipoCalculoPrecio.php (NUEVO)
+  - app/Models/FormulaTransformacion.php — fillable, casts, recalculateCosts()
+  - app/Services/CostoService.php — calcularCostos() acepta tipo y precio manual
+  - app/Services/FormulaTransformacionService.php — respeta modo manual
+  - app/Filament/Resources/FormulaTransformacions/Schemas/FormulaTransformacionForm.php
+    — campo tipo_calculo_precio + campos condicionales margen_deseado / precio_sugerido
+  - database/migrations/2026_02_28_500000_create_formula_transformaciones_table.php
+  - config/app.php — v3.20.0
+  - contexto/Contexto.txt — v3.20.0
+  - tests/Feature/Resources/TransformacionResourceTest.php — ajuste test filtro
+  - Bitácora 007 — esta entrada
+
+COMPORTAMIENTO:
+  - Modo `margen`: usuario ingresa % de margen → sistema calcula precio_sugerido
+  - Modo `manual`: usuario ingresa precio_sugerido → sistema muestra margen resultante
+  - Al cambiar `tipo` en el form, se auto-selecciona el modo y margen default
+  - Para edición existenentes, se respeta el modo guardado (default 'margen')
+
+TESTS:
+  39 tests passed (TransformacionResource + FormulaTransformacionResource)
+
+ ==========================================================================================
+ FIN SESION 62
+ ==========================================================================================
+
+ ==========================================================================================
+ SESION 63 — 2026-06-13 — PRECIO/COSTO A TRANSFORMACION (DESDE FÓRMULA)
+ ==========================================================================================
+ OBJETIVO:
+   Mover precio y costo de FormulaTransformacion a Transformacion, dejando la
+   fórmula como solo receta (insumos + proporciones, sin pricing).
+
+ CAMBIOS ESTRUCTURALES:
+
+   1. Migración ADD (2026_06_13_000001_move_pricing_to_transformaciones.php):
+      - Agrega `tipo_calculo_precio`, `costo_total`, `precio_sugerido`, `margen_deseado`
+        a `transformaciones` (nullable, sin pricing hasta confirmar)
+      - Elimina las mismas 4 columnas de `formula_transformaciones`
+
+   2. Migración principal 2026_03_02_000000_create_transformaciones_tables.php:
+      - Agregadas las 4 columnas de pricing a `transformaciones`
+
+   3. Migración principal 2026_02_28_500000_create_formula_transformaciones_table.php:
+      - Eliminadas las 4 columnas de pricing de `formula_transformaciones`
+
+   4. Modelo Transformacion:
+      - $fillable + $casts: tipo_calculo_precio, costo_total, precio_sugerido, margen_deseado
+
+   5. Modelo FormulaTransformacion:
+      - $fillable + $casts: eliminados tipo_calculo_precio, costo_total, precio_sugerido, margen_deseado
+      - Eliminado método recalculateCosts()
+
+   6. Services:
+      - TransformacionService::confirmar(): guarda costo_total en la transformación al confirmar
+      - Eliminado TransformacionService::actualizarPrecioProductoFinal() (ya no escribe en Producto.precio_venta)
+      - Eliminado FormulaTransformacionService (archivo borrado, estaba vacío)
+
+   7. Filament Forms:
+      - FormulaTransformacionForm: eliminada sección "Precio y Costo" completa
+      - TransformacionForm: agregada sección "Precio y Costo" (tipo_calculo_precio, margen_deseado,
+        precio_sugerido, costo_total disabled)
+
+   8. TransformacionInfolist: agregada sección "Precio y Costo" (badge + montos)
+
+   9. Pages:
+      - CreateTransformacion: eliminado llamado a actualizarPrecioProductoFinal()
+      - CreateFormulaTransformacion: eliminado calculateAndSetCosts() y afterCreate->recalculateCosts()
+      - EditFormulaTransformacion: eliminado calculateAndSetCosts() y afterSave->recalculateCosts()
+
+ TESTS:
+   55 passed (TransformacionService + TransformacionResource + FormulaTransformacionResource)
+   Full suite: 440 passed, 2 skipped, 4 failed (pre-existing FK issues en ClienteRapidoTest)
+
+ VERSIÓN:
+   v3.20.0 → v3.21.0 (config/app.php actualizado manualmente por el usuario)
+
+ PENDIENTES:
+   - Ejecutar php artisan migrate (ADD) en la base real
+   - Borrar la ADD tras la ejecución
+   - Las transformaciones en BORRADOR ahora pueden fijar margen/precio propio
+   - Al confirmar se guarda el costo_total real en la transformación
+   - La fórmula queda limpia como solo receta (sin pricing fijo)
+
+ ==========================================================================================
+ FIN SESION 63
+ ==========================================================================================
+
+ ==========================================================================================
+ SESION 64 — 2026-06-13 — SEGURIDAD + UX FORMULARIO TRANSFORMACIÓN
+ ==========================================================================================
+ OBJETIVO:
+   Corregir vulnerabilidad de sesión persistente y simplificar UX del
+   formulario de Transformación (sección Precio y Costo).
+
+ CAMBIOS:
+
+   1. Seguridad (sesión):
+      - .env: SESSION_EXPIRE_ON_CLOSE=true, SESSION_LIFETIME=30
+
+   2. UX TransformacionForm (app/Filament/Resources/.../TransformacionForm.php):
+      - Sección "Precio y Costo": de 3 a 2 columnas
+      - Costo total: oculto en creación (se calcula al confirmar)
+      - Margen de ganancia: visible solo si Cálculo = margen
+      - Precio sugerido: visible solo si Cálculo = manual
+      - Bug fix: $get() puede devolver enum (objeto) o string;
+        se normaliza con instanceof antes de comparar
+
+ ARCHIVOS MODIFICADOS:
+   - .env
+   - app/Filament/Resources/Transformacions/Schemas/TransformacionForm.php
+
+ VERIFICACIÓN:
+   - vendor/bin/pint --dirty --format agent → sin errores
+
+ --- VERSION ---
+    v3.21.0 → v3.22.0
+
+ ==========================================================================================
+ FIN SESION 64
+ ==========================================================================================
+ ==========================================================================================
+ SESION 65 — 2026-06-13 — SKILLS GLOBALES + COMANDOS PERSONALIZADOS
+ ==========================================================================================
+
+ OBJETIVO:
+   Recrear skills perdidas como globales y crear comandos personalizados
+   para automatizar el workflow del proyecto.
+
+ --- LOG ---
+
+   1. Skills recreadas: 16 skills en ~/.config/opencode/skills/ + backup F:\www\skills\
+      - laravel, filament, php, sql, pest, powershell, designer, dian, spatie
+      - format, vite, debug, migrations, seeders, pos, git
+   2. Skills globales con permisos allow en opencode.json
+   3. AGENTS.md actualizado con tabla de skills
+   4. Comandos personalizados creados en .opencode/commands/:
+      - /actualizar-contexto — auto-patch version, bitácora, ADD migrations
+      - /desplegar — actualizar contexto + git commit/tag/push
+   5. Demo Filament v5 registrado como referencia (F:\www\web\demo-5.x)
+   6. Versión actualizada: v3.23.1
+
+ --- VERSION ---
+    v3.23.0 → v3.23.1
+
+==========================================================================================
+FIN SESION 65
+==========================================================================================
+
+==========================================================================================
+SESION 66 — 2026-06-16 — FIX PRICING EN TRANSFORMACION OBSERVER + PROTECCIÓN FÓRMULAS
+==========================================================================================
+
+OBJETIVO:
+  Corregir 3 bugs críticos en el flujo de transformaciones y proteger las
+  fórmulas ejecutadas contra edición/borrado.
+
+CAMBIOS:
+
+  1. TransformacionObserver::updated() — Pricing corregido:
+     - Antes: usaba Empresa::margen_ganancia_default (30%) ignorando los
+       valores del formulario de transformación.
+     - Ahora:
+       * Si tipo_calculo_precio = manual → asigna precio_sugerido directo
+       * Si tipo_calculo_precio = margen → calcula con margen_deseado de
+         la transformación (fallback a empresa)
+       * No sobreescribe precio_venta si no hay valor definido
+
+  2. TransformacionService::confirmar() — Flag tiene_transformaciones:
+     - Antes: nunca se actualizaba, siempre false. Las protecciones de
+       edición/borrado en fórmulas eran ineficaces.
+     - Ahora: al confirmar se marca FormulaTransformacion.tiene_transformaciones = true.
+     - Al revertir: si no quedan transformaciones activas con esa fórmula,
+       se libera (tiene_transformaciones = false).
+
+  3. FormulaTransformacionTable — Columna visual de estado:
+     - Nueva columna IconColumn 'En uso' que muestra candado cerrado/abierto.
+     - Nueva columna BooleanColumn 'Bloq.' para bloqueo manual.
+
+  4. FormulaTransformacionPolicy — Sincronizada con reglas reales:
+     - update()/delete() ahora verifican tiene_transformaciones y bloqueada.
+     - forceDelete() retorna false explícitamente.
+
+ARCHIVOS MODIFICADOS:
+  - app/Observers/TransformacionObserver.php
+  - app/Services/TransformacionService.php
+  - app/Filament/Resources/FormulaTransformacions/Tables/FormulaTransformacionTable.php
+  - app/Policies/FormulaTransformacionPolicy.php
+  - config/app.php (v3.24.0)
+  - contexto/Contexto.txt
+  - contexto/Bitacora/Bitacora007.txt (este archivo)
+
+DATA FIX:
+  - Ejecutado: UPDATE formula_transformaciones SET tiene_transformaciones = 1
+    para las 2 fórmulas con transformaciones confirmadas existentes.
+
+VERIFICACIÓN:
+  - 55 tests de transformación pasados (159 assertions)
+  - Full suite: 440 passed, 2 skipped, 4 failed (pre-existentes ClienteRapidoTest FK)
+  - Pint: sin errores
+
+--- VERSION ---
+  v3.23.1 → v3.24.0
+
+--- PENDIENTES ---
+  - Los 4 tests fallidos de ClienteRapidoTest (FK en SQLite) existen desde sesión 63
+
+==========================================================================================
+FIN SESION 66
+==========================================================================================
+
+==========================================================================================
+SESION 67 — Jun 16, 2026 | Pricing condicional en Transformaciones
+==========================================================================================
+
+--- OBJETIVO ---
+  Fix TransformacionObserver pricing ignoraba margen_deseado y precio_sugerido.
+  Proteger fórmulas ejecutadas contra edición/eliminación.
+  Pricing condicional: precio_venta solo se establece en primera producción.
+
+--- CAMBIOS REALIZADOS ---
+
+1. TransformacionService::confirmar():
+   - Step 5.1 pricing condicional: actualiza precio_venta solo si $stockAntes == 0
+   - Respeta tipo_calculo_precio: 'manual' usa precio_sugerido directo, 'margen' calcula con margen_deseado
+   - Fallback a Empresa::margen_ganancia_default si margen_deseado es null
+   - Marca FormulaTransformacion::tiene_transformaciones = true al vincular fórmula
+   - TransformacionService::revertir(): libera tiene_transformaciones = false si no quedan transformaciones activas
+
+2. TransformacionObserver:
+   - Eliminado bloque de pricing (costo_promedio + precio_venta) — muerto por guard de movimientos
+
+3. FormulaTransformacionPolicy:
+   - update()/delete(): rechazan si tiene_transformaciones o bloqueada
+   - forceDelete(): retorna false
+
+4. FormulaTransformacionTable:
+   - Columna IconColumn "En uso" (candado cerrado/abierto)
+   - Columna BooleanColumn "Bloq."
+
+5. TransformacionForm:
+   - Sección pricing condicional: select producto_final_id verifica StockBodega.cantidad
+   - Si tiene stock: campos deshabilitados con helper text explicativo + precarga valores última transformación
+   - Si no tiene stock: campos editables con defaults normales
+   - Hidden _producto_tiene_stock (dehydrated false)
+
+6. Data fix: UPDATE formula_transformaciones SET tiene_transformaciones = 1 para 2 fórmulas con transformaciones existentes.
+
+--- TESTS ---
+  - 55 transformacion tests passed (159 assertions)
+  - Full suite: 440 passed, 2 skipped, 4 failed (pre-existentes ClienteRapidoTest FK)
+
+--- VERSION ---
+  v3.24.0 → v3.25.0
+
+--- PENDIENTES ---
+  - Los 4 tests fallidos de ClienteRapidoTest (FK en SQLite) existen desde sesión 63
+
+==========================================================================================
+FIN SESION 67
+==========================================================================================
+
+==========================================================================================
+SESION 68 — Jun 16, 2026 | Eliminar campo nombre de Fórmulas
+==========================================================================================
+
+--- OBJETIVO ---
+  Eliminar columna `nombre` de `formula_transformaciones` — redundante porque
+  `producto_final_nombre` ya identifica la fórmula. Unique en `producto_final_nombre`
+  evita duplicados.
+
+--- CAMBIOS REALIZADOS ---
+
+1. Migración:
+   - ADD: drop columna `nombre` + unique en `producto_final_nombre`
+   - Migración principal actualizada (sin nombre + unique)
+   - Ejecutada y borrada
+
+2. Data fix: backfill `producto_final_nombre` desde productos.nombre para fórmulas existentes
+
+3. Código:
+   - Modelo: `nombre` removido de $fillable
+   - Resource: searchable attributes → `producto_final_nombre`
+   - Table: columna → `TextColumn::make('producto_final_nombre')`
+   - Form: campo `nombre` eliminado; `producto_final_nombre` ahora con regla duplicado custom
+   - Infolist: `formula.nombre` → `formula.producto_final_nombre`
+   - TransformacionForm select: `->relationship('formula', 'producto_final_nombre')`
+   - CreateTransformacion notificación: `$formula->producto_final_nombre`
+   - TransformacionService auto-create: `producto_final_nombre` en vez de nombre
+   - CreateFormulaTransformacion: ya no unsetea `producto_final_nombre`
+
+4. Tests actualizados para usar `producto_final_nombre`
+
+--- TESTS ---
+  - 15 formula tests passed (53 assertions)
+  - 53 transformacion+formula tests passed (141 assertions)
+  - Full suite: 436 passed, 2 skipped, 4 failed (pre-existentes ClienteRapidoTest FK)
+
+--- VERSION ---
+  v3.25.0 (sin cambio — ya actualizada en sesión 67)
+
+--- PENDIENTES ---
+  - Los 4 tests fallidos de ClienteRapidoTest (FK en SQLite) existen desde sesión 63
+
+--- VERSION ---
+  v3.26.0
+
+==========================================================================================
+SESION 69 — 2026-06-16 — INTEGRIDAD PRODUCTOS + CATEGORÍA/MARCA AUTO-CREACIÓN
+==========================================================================================
+
+OBJETIVO:
+  - Auto-crear categoría y marca desde el tipo de transformación (TransformacionTipo)
+  - Migración ADD para integridad en productos (NOT NULL + índices)
+  - Corregir round() TypeError en TransformacionService (PHP 8.4)
+
+--- TransformacionTipo.php ---
+  - Método categoriaSugerida(): busca/crea categoría por label()
+  - Método marcaSugerida(): busca/crea marca por label()
+
+--- TransformacionForm.php ---
+  - createOptionForm recibe $tipo desde el formulario padre
+  - createOptionUsing auto-asigna categoria_id, marca_id,
+    unidad_medida_id e impuesto_id al crear producto rápido
+
+--- Migración ADD (ejecutada + eliminada) ---
+  2026_06_17_005517_add_integridad_to_productos_table.php
+  - NOT NULL: categoria_id, marca_id, unidad_medida_id, impuesto_id, costo_promedio
+  - FK cambiadas de SET NULL a RESTRICT
+  - Índice: productos_tipo_producto_idx
+  - Se actualizó también la migración primaria (2026_02_24_030100)
+
+--- TransformacionService.php ---
+  - Fix: round((float) $nuevoPrecio, 2) para PHP 8.4 strict types
+
+--- ProductoForm.php ---
+  - required() y default(1) en categoria_id, marca_id, unidad_medida_id, impuesto_id
+
+==========================================================================================
+FIN SESION 69
+==========================================================================================
+
+==========================================================================================
+SESION 70 — 2026-07-01 | Corrección seeders ciudades + actualización Contexto
+==========================================================================================
+
+OBJETIVO:
+  Corregir seeders de ciudades y actualizar documentación.
+
+CAMBIOS REALIZADOS:
+
+1. VichadaSeeder.php:
+   - Eliminada VILLAVICENCIO (solo debe estar en Meta)
+   - Resultado: seeders correctos, pero BD tiene duplicado (requiere limpieza manual)
+
+2. Contexto.txt:
+   - Versión: v3.26.0 → v3.26.1
+   - Corregido detalle: ZIPAQUIRÁ NO estaba duplicada (estaba correcta en Cundinamarca)
+   - VILLAVICENCIO es la ciudad duplicada en BD (META + VICHADA)
+
+VERIFICACIÓN:
+   - Seeders revisados: VILLAVICENCIO solo en MetaSeeder
+   - IBAGUÉ correcto en TolimaSeeder
+   - GINEBRA correcto en ValleDelCaucaSeeder
+   - ZIPAQUIRÁ correcto en CundinamarcaSeeder (no era duplicada)
+
+==========================================================================================
+FIN SESION 70
+==========================================================================================

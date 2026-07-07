@@ -1,0 +1,12 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-03-30 22:13:36
+ Entorno   : local
+ Directorio: D:\www\Web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------

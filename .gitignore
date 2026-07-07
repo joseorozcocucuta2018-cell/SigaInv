@@ -1,0 +1,50 @@
+# --- Dependencias de Paquetes ---
+/node_modules
+/vendor
+
+# --- Configuración y Secretos (CRÍTICO) ---
+.gemini
+.opencode
+.env
+.env.backup
+.env.production
+php_errors.log
+/storage/*.key
+
+# --- Directorios de Almacenamiento (Laravel) ---
+/storage/app/public/*
+!/storage/app/public/.gitignore
+/storage/framework/cache/data/*
+!/storage/framework/cache/data/.gitignore
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+/storage/framework/testing/*
+!/storage/framework/testing/.gitignore
+/storage/framework/views/*
+!/storage/framework/views/.gitignore
+/storage/logs/*
+!/storage/logs/.gitignore
+
+# --- Compilación de Activos (Vite / Filament) ---
+/public/build
+/public/hot
+/public/storage
+
+# --- Bases de Datos Locales (SQLite) ---
+/database/*.sqlite
+/database/*.sqlite-journal
+
+# --- Herramientas de Desarrollo y SO ---
+.phpunit.result.cache
+.idea/
+.vscode/
+Homestead.json
+Homestead.yaml
+auth.json
+npm-debug.log
+yarn-error.log
+.DS_Store
+Thumbs.db
+AGENTS.md 
+GEMINI.md
+opencode.json

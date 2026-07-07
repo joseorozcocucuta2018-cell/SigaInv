@@ -1,0 +1,95 @@
+# CONTEXTO DEL PROYECTO — Sistema de Gestión de Inventarios SigaInv
+Actualizado: Jul 01, 2026 | v3.26.1
+
+---
+
+## REGLAS DE ORO (ESTRICTO CUMPLIMIENTO)
+1. No tocar lo que ya funciona.
+2. Cada cambio es un paso aislado y específico.
+3. Planificar antes de codificar (entregar lógica antes que código).
+4. Investigar a fondo cada recurso usado; no asumir ni improvisar.
+5. No habrá interacción con ningún tipo de repositorio.
+6. Entorno: Windows 11 + PowerShell 7.5.4. Prohibido sugerir comandos Linux (Bash/Sh).
+7. No ser condescendiente, no pedir disculpas y no decir "tienes razón". es trabajo en equipo
+8. No ejecutar migraciones; se ejecutan manualmente o a solicitud expresa.
+9. No intervenir en control de versiones ni despliegue.
+10. Activar MCP y skills según la tarea (.opencode/skills/): laravel, filament, php, sql, pest, powershell, designer, dian, spatie, format, vite, debug, migrations, seeders, pos, git.
+11. **Basic DDD**: Enums (`app/Enums/`) para dominios, Services (`app/Services/`) para lógica, Observers (`app/Observers/`) solo eventos, Models thin (relaciones/scopes), UI consume Enums/Services.
+12. **Bitácora**: Cada archivo BitacoraXXX.txt max 1000 líneas. Agregar sesiones al mismo archivo hasta alcanzar el límite.
+13. Si es necesario actualizar una tabla: crear migración ADD → actualizar la migración principal → ejecutar la ADD → borrar la ADD. Las migraciones core (`0001_01_01_*`) no se tocan (solo ADD + drop).
+14. Todo cambio en tablas requiere actualizar recursos, modelos, enums,fillables, etc.
+
+
+---
+
+## PROYECTO
+- **Ruta**: F:\www\Web\sigaInv | **Stack**: Laravel 13 + Filament v5.6.1 + PHP 8.4.12 + MySQL/MariaDB
+- **Plugins**: Currency, Quick Create, Edit Profile, Auto Logout, Record Nav, Excel, entre otros
+- **Spatie Permissions v7.2** — Roles: administrador, auxiliar, contador, vendedor, cliente
+- **Tests**: Pest + SQLite (database/testing.sqlite) | Comando: `php artisan test`
+
+### Directorios de contexto
+- `contexto/` — este archivo
+- `contexto/Bitacora/` — bitácora de sesiones
+- `contexto/Auditorias/` — auditorías del proyecto
+- `contexto/Tasklists/` — tasklists pendientes y futuras implementaciones
+
+## BASE DE DATOS
+59 tablas. Revisar `database/migrations/` para estructura detallada.
+
+### Campos clave
+- `clientes.id=1` / `proveedores.id=1` → protegidos (MISCELANEOS)
+- `productos.costo_promedio` → decimal(15,4) NOT NULL default 0, calculado por `CostoPromedioService`
+- `productos.categoria_id/marca_id/unidad_medida_id/impuesto_id` → NOT NULL (integridad v3.26)
+- `TransformacionTipo::categoriaSugerida()/marcaSugerida()` → auto-crean desde tipo
+- `formula_transformaciones.producto_final_nombre` → único, reemplaza columna `nombre` eliminada
+- `numeraciones.resolucion_numero` → Resolución DIAN
+- Moneda: COP, formato `$2.712.366` (punto miles, sin decimales)
+
+---
+
+## ARQUITECTURA DDD
+- **Enums** → `app/Enums/` — dominios con `label()`, `color()`, `icon()`
+- **Services** → `app/Services/` — lógica de negocio, transacciones, validaciones
+- **Observers** → `app/Observers/` — solo eventos del modelo, delegan a Services
+- **Models** → relaciones, scopes, mutators (thin)
+- **UI (Filament)** → forms/tables sin lógica de dominio, consumen Enums y Services
+
+---
+
+## DEUDA TÉCNICA IDENTIFICADA (ESTADO REAL — Jun 10, 2026)
+
+### ✅ RESUELTOS (Tasklist Tareas 6–10 completadas)
+- `turnos.bodega_id`: FK ya existe en migración principal `2026_06_02_173842_create_turnos_table.php`
+- Modelos con casts: `Empresa` (tipo_persona, regimen_tributario), `Auditoria` (operacion), `AjusteInventario` (es_saldo_inicial → boolean)
+- 3 Forms Filament migrados a Enums: `ClienteResource.portal_acceso` → `PortalAccesoEnum`, `EmpresaForm.tipo_persona` → `EmpresaTipoPersona`, `EmpresaForm.regimen_tributario` → `EmpresaRegimenTributario`
+- Asimetría `Devolucion.motivo` vs `DevolucionCompra.motivo`: documentada como intencional (libre vs catálogo)
+- Enums: `BancoCategoria` no existe; `CajaCategoria` se usa en `movimientos_cajas.categoria`
+- Carpetas renombradas: `Cliente/` → `PortalClientes/`, `Proveedor/` → `PortalProveedores/` (no existe, no aplica)
+- `NumeracionesSeeder` existe en `database/seeders/NumeracionesSeeder.php`
+- Auditoría completa: ejecutada y reflejada en Tasklist Tarea 6 (todas `[OK]`)
+
+### ✅ RESUELTOS (Tarea 1 parcial)
+- VichadaSeeder.php: VILLAVICENCIO eliminada (seeder correcto)
+- ZIPAQUIRÁ verificado: NO era duplicada (estaba correcta en Cundinamarca)
+- IBAGUÉ/GINEBRA verificadas: correctas en Tolima/ValleDelCauca
+
+### ⚠️ PENDIENTES REALES
+1. **VILLAVICENCIO duplicada en BD** — seeders corregidos, pero BD tiene registro en META + VICHADA
+   - Migración de limpieza manual requerida (no generada - se ejecuta a solicitud)
+
+2. **Actualizar `Contexto.txt`** — este archivo
+
+3. **Recrear skills perdidas** — 16 skills globales (sesión 62):
+   - `~/.config/opencode/skills/` — global (disponible en todos los proyectos)
+   - `F:\www\skills\` — backup/referencia
+   - Skills: laravel, filament, php, sql, pest, powershell, designer, dian, spatie, format, vite, debug, migrations, seeders, pos, git
+
+4. **Comandos globales** creados en `~/.config/opencode/commands/` (sesión 65):
+   - `/actualizar-contexto` — auto-patch versión, bitácora, migraciones ADD
+   - `/desplegar` — actualizar contexto + git commit/tag/push
+   - `/ponte-pilas` — detente, lee contexto, retoma el rumbo
+
+---
+
+## FUTURAS IMPLEMENTACIONES (ver Tasklist.txt para detalle)

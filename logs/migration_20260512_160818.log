@@ -1,0 +1,11 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-05-12 16:08:18
+ Entorno   : production
+ Directorio: D:\www\Web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+ ATENCION: Entorno de PRODUCCION detectado!
+ Operacion cancelada por el usuario.

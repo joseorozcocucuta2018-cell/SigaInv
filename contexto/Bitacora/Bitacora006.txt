@@ -1,0 +1,220 @@
+==========================================================================================
+SESION 58 — 2026-06-05 — PORTAL DE CLIENTES — CORRECCIONES Y CIERRE DE BRECHAS
+==========================================================================================
+
+OBJETIVO:
+  Ejecutar la Tarea 7 del Tasklist: cerrar las 6 brechas identificadas en
+  la auditoría del portal /clientes. Plan de 7 pasos aislados, cada uno
+  verificado con pint + tests antes de continuar.
+
+--- AUDITORÍA INICIAL (revisada al inicio de la sesión) ----------------
+
+  Brechas detectadas:
+    1. ViewAction en 3 tablas → 404 (no había página 'view' registrada)
+    2. No había Infolists de detalle para venta/remision/cotizacion
+    3. PdfController bloqueaba clientes (can('venta.ver') == false)
+    4. Sin decisión sobre registro público del portal
+    5. ClienteDashboard::getStats() deprecado en Filament v5
+    6. Sin tests de aislamiento del portal
+
+  Hallazgos críticos durante la investigación:
+    - Permisos 'portal.*' YA EXISTÍAN en RoleSeeder (portal.ver,
+      portal.mis_ventas, portal.mis_remisiones, portal.mis_cotizaciones,
+      portal.mi_estado_cuenta) pero NUNCA SE USABAN.
+    - PdfController usaba permisos admin (venta.ver, remision.ver,
+      cotizacion.ver) que el rol cliente NO tiene → 403 garantizado.
+
+--- 7.1 — REEMPLAZAR ViewAction 404 POR Action CON MODAL INfolist ------
+
+  Decisión: NO agregar página 'view' (cliente no debe editar nada).
+  Usar Action con ->schema() (alias de ->infolist() en v5) que abre
+  modal read-only con la Infolist del documento.
+
+  Archivos modificados (3):
+  ├─ app/Filament/Resources/PortalClientes/FacturaPortals/Tables/FacturaPortalsTable.php
+  ├─ app/Filament/Resources/PortalClientes/RemisionPortals/Tables/RemisionPortalsTable.php
+  └─ app/Filament/Resources/PortalClientes/CotizacionPortals/Tables/CotizacionPortalsTable.php
+
+  Patrón aplicado:
+    Action::make('ver')
+        ->label('Ver')
+        ->icon('heroicon-o-eye')
+        ->color('gray')
+        ->modalSubmitAction(false)
+        ->modalCancelActionLabel('Cerrar')
+        ->modalHeading(fn ($record) => "Factura {$record->numero}")
+        ->schema(fn ($record): array =>
+            FacturaPortalInfolist::configure(Schema::make())->getComponents()
+        ),
+
+--- 7.2 — CREAR INfolists DE DETALLE PARA LOS 3 DOCUMENTOS -----------
+
+  Archivos nuevos (3):
+  ├─ app/Filament/Resources/PortalClientes/FacturaPortals/Schemas/FacturaPortalInfolist.php
+  ├─ app/Filament/Resources/PortalClientes/RemisionPortals/Schemas/RemisionPortalInfolist.php
+  └─ app/Filament/Resources/PortalClientes/CotizacionPortals/Schemas/CotizacionPortalInfolist.php
+
+  Estructura de cada Infolist:
+  ├─ Section "Información del Documento" (numero, fecha, estado)
+  ├─ Section "Valores" (subtotal, impuestos, total, [saldo, fec_vto si aplica])
+  ├─ Section "Productos" (RepeatableEntry de detalles con producto/cantidad/precio/subtotal)
+  └─ Section "Observaciones" (condicional, solo si hay contenido)
+
+--- 7.3 — FIX PdfController + AGREGAR ACCIÓN PDF EN LAS 3 TABLAS -----
+
+  BUG CRÍTICO: Cliente NO podía descargar PDF de SUS documentos
+  (can('venta.ver') == false para rol cliente).
+
+  Solución — agregar helper privado con doble check:
+    private function puedeVerDocumento(mixed $documento, string $permisoStaff, string $permisoPortal): bool
+    {
+        $user = Auth::user();
+        if (! $user) return false;
+        if ($user->can($permisoStaff)) return true;          // admin path (compat)
+        if ($user->can($permisoPortal)) {                    // portal path
+            $clienteId = $user->cliente?->id;
+            return $clienteId !== null
+                && (int) $documento->cliente_id === (int) $clienteId;
+        }
+        return false;
+    }
+
+  Aplicado en PdfController::venta, ::remision, ::cotizacion.
+  Backward compatible: comportamiento admin NO cambia.
+
+  Acción de impresión en las 3 tablas (reutiliza PrintAction existente):
+    PrintAction::make('pdf.venta')       // en FacturaPortalsTable
+    PrintAction::make('pdf.remision')    // en RemisionPortalsTable
+    PrintAction::make('pdf.cotizacion')  // en CotizacionPortalsTable
+
+--- 7.4 — DECISIÓN: REGISTER PÚBLICO DEL PORTAL ---------------------
+
+  Análisis:
+    El Login del cliente leía un flash 'registro_pendiente' que nunca
+    se setea desde el panel clientes (la Register está solo en admin).
+    El alta de clientes con acceso al portal es MANUAL desde
+    ClienteResource → Sección "Portal de Cliente".
+
+  Decisión del usuario: Opción B (recomendada).
+  - Quitar lectura del flash 'registro_pendiente' del Login del cliente
+  - Documentar en docblock que el alta es manual desde admin
+  - + Seguro, sin spam/bots, sin código nuevo
+
+  Archivo modificado:
+  └─ app/Filament/Cliente/Pages/Auth/Login.php
+       - Eliminado método mount() y su lógica de flash
+       - Agregado PHPDoc explicando el flujo manual
+
+--- 7.5 — MIGRAR ClienteDashboard::getStats() A WIDGET v5 -----------
+
+  Filament v5 deprecó getStats() en Dashboard pages. Solución: extraer
+  la lógica a un StatsOverviewWidget dedicado.
+
+  Archivo nuevo:
+  └─ app/Filament/Cliente/Widgets/ClienteStatsWidget.php
+       extends Filament\Widgets\StatsOverviewWidget
+       5 Stat cards: Facturas, Total Facturado, Saldo, Remisiones, Cotic.
+
+  Archivos modificados:
+  ├─ app/Filament/Cliente/Pages/ClienteDashboard.php
+  │    - Eliminado getStats() (76 líneas → 8 líneas)
+  │    - Implementado getHeaderWidgets() que retorna [ClienteStatsWidget::class]
+  └─ app/Providers/Filament/ClientePanelProvider.php
+       - Agregado ->widgets([ClienteStatsWidget::class])
+
+--- 7.6 — TESTS DE AISLAMIENTO DEL PORTAL -------------------------
+
+  Archivo nuevo:
+  └─ tests/Feature/Portal/PortalAccesoTest.php (16 tests)
+
+  Cobertura:
+  ├─ Acceso al panel:
+  │   ├─ Cliente activo+portal_acceso=activo → 200 OK
+  │   ├─ portal_acceso=sin_acceso → 403
+  │   ├─ portal_acceso=pendiente → 403
+  │   ├─ Rol vendedor → 403
+  │   └─ Anónimo → redirect a /clientes/login
+  ├─ Aislamiento de listados (livewire):
+  │   ├─ Cliente ve solo SUS facturas / remisiones / cotizaciones
+  │   └─ Facturas en BORRADOR NO visibles
+  └─ Seguridad de PDFs (HTTP):
+      ├─ Cliente puede descargar PDFs de SUS documentos (3 tipos)
+      └─ Cliente NO puede descargar PDFs de documentos AJENOS (3 tipos)
+
+  Helpers creados:
+  ├─ crearClienteConPortal(PortalAccesoEnum $estado) → [User, Cliente]
+  ├─ crearBodega() → Bodega
+  ├─ crearVentaParaCliente(int, VentaEstado) → Venta
+  ├─ crearRemisionParaCliente(int, RemisionEstado) → Remision
+  └─ crearCotizacionParaCliente(int, CotizacionEstado) → Cotizacion
+
+--- 7.7 — VERIFICACIÓN FINAL ----------------------------------------
+
+  Pint:           vendor/bin/pint --dirty --format agent  → passed
+  Tests portal:   php artisan test --compact --filter=PortalAcceso
+                    → 20 passed (16 nuevos + 4 del fix)
+  Tests regresión: php artisan test --compact
+                    → 375 passed, 2 skipped, 0 failed (era 359)
+                       +16 tests nuevos del portal
+  Grep regresión PortalClientes:
+                    Select-String 'ViewAction::make' → 0 resultados
+  Grep regresión Models (enum === 'string'):
+                    Select-String "\$x === 'activo'" app/Models → 0 resultados
+
+--- BUGS CRÍTICOS DESCUBIERTOS Y ARREGLADOS -------------------------
+
+  1. User::hasPortalAccess() comparaba BackedEnum con string:
+       return $cliente && $cliente->portal_acceso === 'activo';
+     → siempre false (enum !== string). El portal NUNCA funcionó
+       realmente. Fix:
+       return $cliente && $cliente->portal_acceso?->value === PortalAccesoEnum::ACTIVO->value;
+
+  2. Ruta 'login' no estaba nombrada en routes/web.php:
+       Authenticate middleware → RouteNotFoundException para anónimos
+       accediendo a rutas pdf.*. Fix: ->name('login') en línea 12.
+
+--- ARCHIVOS DE LA SESIÓN (resumen) ----------------------------------
+
+  Nuevos (5):
+    - app/Filament/Resources/PortalClientes/FacturaPortals/Schemas/FacturaPortalInfolist.php
+    - app/Filament/Resources/PortalClientes/RemisionPortals/Schemas/RemisionPortalInfolist.php
+    - app/Filament/Resources/PortalClientes/CotizacionPortals/Schemas/CotizacionPortalInfolist.php
+    - app/Filament/Cliente/Widgets/ClienteStatsWidget.php
+    - tests/Feature/Portal/PortalAccesoTest.php
+
+  Modificados (10):
+    - app/Filament/Resources/PortalClientes/FacturaPortals/Tables/FacturaPortalsTable.php
+    - app/Filament/Resources/PortalClientes/RemisionPortals/Tables/RemisionPortalsTable.php
+    - app/Filament/Resources/PortalClientes/CotizacionPortals/Tables/CotizacionPortalsTable.php
+    - app/Http/Controllers/PdfController.php
+    - app/Models/User.php
+    - app/Filament/Cliente/Pages/Auth/Login.php
+    - app/Filament/Cliente/Pages/ClienteDashboard.php
+    - app/Providers/Filament/ClientePanelProvider.php
+    - routes/web.php
+    - config/app.php (v3.17.0 → v3.17.1)
+    - contexto/Contexto.txt (header v3.16.8 → v3.17.1)
+
+--- VERSION ----------------------------------------------------------
+
+   v3.17.0 (config/app.php) → v3.17.1
+   (Tarea 7 completa: portal funcional, 2 bugs críticos arreglados,
+   +16 tests, dashboard migrado a Widget v5)
+
+  GitHub: NO se hizo commit/push/tag (instrucción del usuario — sesión 58)
+
+--- PENDIENTES PARA SIGUIENTE SESIÓN ---------------------------------
+
+  - Replicar el patrón de Tarea 7 a PortalProveedores (no existe aún)
+  - Evaluar mover PortalAccesoEnum a un campo dedicado en users
+    (ahora vive en clientes; el cliente del portal es siempre el mismo
+    user, pero el modelo Cliente es quien tiene la relación)
+  - Considerar tests browser de Filament (smoke testing de los modales
+    de Infolist y de la acción PrintAction)
+  - Tarea 6 sigue abierta: enums TipoPersonaEnum, RegimenTributarioEnum,
+    AuditoriaOperacionEnum + casts pendientes
+
+==========================================================================================
+FIN SESION 58
+==========================================================================================
+================================

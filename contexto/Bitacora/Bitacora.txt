@@ -1,0 +1,18 @@
+================================================================================
+                   BITÁCORA DE DESARROLLO — sigaInv
+          Índice de Archivos de Bitácora
+================================================================================
+
+La bitácora ha sido dividida en múltiples archivos para mejorar su manejo:
+
+- Bitacora001.txt: Sesiones S01 a S06 (Marzo 2026)
+- Bitacora002.txt: Sesiones S05B a S12 (Marzo 2026)
+- Bitacora003.txt: Sesiones S13 a S29 (Marzo - Mayo 2026)
+- Bitacora004.txt: Sesiones S30 a S37 (Mayo 2026)
+- Bitacora005.txt: Sesiones S46 a S57 (Mayo - Junio 2026)
+- Bitacora006.txt: Sesión S58 (Junio 2026)
+- Bitacora007.txt: Sesiones S59 a S65 (Junio 2026)
+
+Para ver el detalle cronológico completo, consulte los archivos individuales.
+
+Última actualización: 2026-06-16 — Sesión 66 (en Bitacora007.txt)

@@ -1,0 +1,88 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-06-16 19:00:12
+ Entorno   : local
+ Directorio: F:\www\web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------
+
+  Dropping all tables ........................................................................................ 1s DONE
+
+   INFO  Preparing database.  
+
+  Creating migration table .............................................................................. 84.94ms DONE
+
+   INFO  Running migrations.  
+
+  0001_01_01_000000_create_users_table ................................................................. 177.07ms DONE
+  0001_01_01_000001_create_cache_table .................................................................. 60.11ms DONE
+  0001_01_01_000002_create_jobs_table ................................................................... 91.94ms DONE
+  0001_01_01_000003_create_permission_tables ........................................................... 490.80ms DONE
+  0001_01_01_000004_create_departamentos_table .......................................................... 25.97ms DONE
+  0001_01_01_000005_create_ciudades_table ............................................................... 52.71ms DONE
+  0001_01_01_000006_create_clientes_table .............................................................. 374.83ms DONE
+  0001_01_01_000007_create_proveedores_table ........................................................... 189.18ms DONE
+  0001_01_01_000008_create_empresa_table ............................................................... 139.73ms DONE
+  2025_05_25_041509_create_auditorias_table ............................................................ 105.22ms DONE
+  2026_02_24_010100_create_unidades_medida_table ........................................................ 10.60ms DONE
+  2026_02_24_010200_create_categorias_table ............................................................. 51.09ms DONE
+  2026_02_24_010300_create_marcas_table ................................................................. 29.41ms DONE
+  2026_02_24_010400_create_impuestos_table ............................................................... 9.73ms DONE
+  2026_02_24_010500_create_formas_pago_table ............................................................ 24.77ms DONE
+  2026_02_24_010600_create_numeraciones_table ........................................................... 26.38ms DONE
+  2026_02_24_020100_create_bancos_table ................................................................ 104.24ms DONE
+  2026_02_24_020200_create_bodegas_table ............................................................... 280.78ms DONE
+  2026_02_24_030100_create_productos_table ............................................................. 333.11ms DONE
+  2026_02_24_030200_create_stock_bodegas_table ......................................................... 120.99ms DONE
+  2026_02_24_030201_create_stock_bodega_lotes_table ..................................................... 68.57ms DONE
+  2026_02_24_030202_create_stock_bodega_serials_table ................................................... 75.73ms DONE
+  2026_02_24_030300_create_movimientos_inventario_table ................................................ 419.99ms DONE
+  2026_02_24_040100_create_cotizaciones_table .......................................................... 193.53ms DONE
+  2026_02_24_040200_create_detalle_cotizaciones_table .................................................. 174.30ms DONE
+  2026_02_24_040300_create_remisiones_table ............................................................ 295.71ms DONE
+  2026_02_24_040400_create_detalle_remisiones_table .................................................... 285.76ms DONE
+  2026_02_24_040500_create_ventas_table ................................................................ 332.96ms DONE
+  2026_02_24_040600_create_detalle_ventas_table ........................................................ 172.51ms DONE
+  2026_02_24_040700_create_compras_table ............................................................... 229.76ms DONE
+  2026_02_24_040800_create_detalle_compras_table ....................................................... 296.93ms DONE
+  2026_02_24_040900_create_cajas_table .................................................................. 64.39ms DONE
+  2026_02_24_041000_create_movimientos_cajas_table ..................................................... 183.71ms DONE
+  2026_02_24_050100_create_pago_clientes_table ......................................................... 367.13ms DONE
+  2026_02_24_050200_create_pago_proveedores_table ...................................................... 486.54ms DONE
+  2026_02_24_050300_create_movimientos_bancos_table .................................................... 179.30ms DONE
+  2026_02_24_060100_create_historico_precios_table ..................................................... 196.24ms DONE
+  2026_02_28_500000_create_formula_transformaciones_table .............................................. 268.24ms DONE
+  2026_03_01_000002_create_auditoria_documentos_table .................................................. 162.63ms DONE
+  2026_03_02_000000_create_transformaciones_tables ...................................................... 62.71ms FAIL
+
+   Illuminate\Database\QueryException 
+
+  SQLSTATE[42000]: Syntax error or access violation: 1064 You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'after `cantidad_a_producir`, `costo_total` decimal(15, 2) null after `tipo_calcu' at line 1 (Connection: mysql, Host: localhost, Port: 3306, Database: sigainv, SQL: create table `transformaciones` (`id` bigint unsigned not null auto_increment primary key, `bodega_id` bigint unsigned not null, `tipo` enum('combo', 'promo', 'reenvase', 'fabricacion') not null default 'fabricacion', `tipo_promo` enum('descuento', 'cantidad', 'empaquetado') null comment 'Solo aplica si tipo = promo', `fecha_vencimiento` datetime null comment 'Solo aplica si tipo = promo', `producto_final_id` bigint unsigned null, `formula_transformacion_id` bigint unsigned null, `cantidad_a_producir` decimal(10, 3) not null default '1' comment 'Cuántos productos finales se desean crear con esta fórmula', `tipo_calculo_precio` enum('margen', 'manual') not null default 'margen' after `cantidad_a_producir`, `costo_total` decimal(15, 2) null after `tipo_calculo_precio`, `precio_sugerido` decimal(15, 2) null after `costo_total`, `margen_deseado` decimal(5, 2) not null default '30' after `precio_sugerido`, `estado` enum('borrador', 'confirmada', 'revertida') not null default 'borrador', `confirmada_en` datetime null, `revertida_en` datetime null, `fecha` datetime not null default CURRENT_TIMESTAMP, `observaciones` text null, `usuario_id` bigint unsigned null, `created_at` timestamp null, `updated_at` timestamp null, `deleted_at` timestamp null) default character set utf8mb4 collate 'utf8mb4_unicode_ci')
+
+  at vendor\laravel\framework\src\Illuminate\Database\Connection.php:841
+    837▕             $exceptionType = ($isUniqueConstraintError = $this->isUniqueConstraintError($e))
+    838▕                 ? UniqueConstraintViolationException::class
+    839▕                 : QueryException::class;
+    840▕ 
+  ➜ 841▕             $exception = new $exceptionType(
+    842▕                 $this->getNameWithReadWriteType(),
+    843▕                 $query,
+    844▕                 $this->prepareBindings($bindings),
+    845▕                 $e,
+
+  1   vendor\laravel\framework\src\Illuminate\Database\Connection.php:581
+      PDOException::("SQLSTATE[42000]: Syntax error or access violation: 1064 You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near 'after `cantidad_a_producir`, `costo_total` decimal(15, 2) null after `tipo_calcu' at line 1")
+
+  2   vendor\laravel\framework\src\Illuminate\Database\Connection.php:581
+      PDO::prepare("create table `transformaciones` (`id` bigint unsigned not null auto_increment primary key, `bodega_id` bigint unsigned not null, `tipo` enum('combo', 'promo', 'reenvase', 'fabricacion') not null default 'fabricacion', `tipo_promo` enum('descuento', 'cantidad', 'empaquetado') null comment 'Solo aplica si tipo = promo', `fecha_vencimiento` datetime null comment 'Solo aplica si tipo = promo', `producto_final_id` bigint unsigned null, `formula_transformacion_id` bigint unsigned null, `cantidad_a_producir` decimal(10, 3) not null default '1' comment 'Cuántos productos finales se desean crear con esta fórmula', `tipo_calculo_precio` enum('margen', 'manual') not null default 'margen' after `cantidad_a_producir`, `costo_total` decimal(15, 2) null after `tipo_calculo_precio`, `precio_sugerido` decimal(15, 2) null after `costo_total`, `margen_deseado` decimal(5, 2) not null default '30' after `precio_sugerido`, `estado` enum('borrador', 'confirmada', 'revertida') not null default 'borrador', `co...")
+
+----------------------------------------
+ ExitCode  : 1 (FALLO)
+ Duracion  : 31,00s
+ Log       : F:\www\web\sigaInv\logs\migration_20260616_190012.log
+========================================

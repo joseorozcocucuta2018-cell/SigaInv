@@ -1,0 +1,167 @@
+================================================================================
+            TASKLIST MAESTRO — RECONSTRUCCIÓN SIGAINV ULTIMATE (v21.0)
+            Hoja de ruta completa: Migraciones, Modelos y Recursos Filament
+================================================================================
+Fecha Inicio : 2026-03-29
+Estado       : [CoreData v21.1 COMPLETADO] - Infraestructura base configurada.
+Objetivo     : Recrear sigainv2 con arquitectura de Servicios y Observers v5.
+
+CONVENCIONES:
+  [ ] Pendiente   [~] En progreso   [OK] Completado   [--] Diferido
+================================================================================
+REGLA DE INMUTABILIDAD DE COREDATA
+================================================================================
+  [!!!] IMPORTANTE: Las migraciones con prefijo 0001_ son de solo lectura.
+  No deben ser modificadas después de su creación inicial (Ground Truth).
+  Cualquier cambio futuro debe realizarse mediante migraciones de alteración.
+================================================================================
+PRERREQUISITOS DEL PROYECTO
+================================================================================
+  [OK] Laravel 12.x + Filament v5.4+
+  [OK] Script Base: crear2.ps1 v21.1 (ULTIMATE + Audit)
+  [OK] Base de Datos: MySQL 8.x con soporte JSON
+================================================================================
+
+================================================================================
+BLOQUE 0 — INFRAESTRUCTURA Y SEGURIDAD NATIVA
+================================================================================
+
+[!!!] 0.1 — Base de Usuario y Permisos
+------------------------------------------------------
+  [OK] 0.1.1  [INMUTABLE] Migración: 0001_01_01_000000_create_users_table
+  [OK] 0.1.2  [INMUTABLE] Migración: 0001_01_01_000003_create_permission_tables
+  [OK] 0.1.3  Modelo: User.php (Traits HasRoles, MFA, HasAvatar)
+  [OK] 0.1.4  Recurso: UserResource (Gestión de usuarios y roles)
+
+[!!!] 0.2 — Auditoría de Sistema (sigainv2 Style)
+------------------------------------------------------
+  [OK] 0.2.1  Migración: 0001_01_01_000013_create_auditorias_table
+  [OK] 0.2.2  Migración: 0001_01_01_000014_create_auditoria_documentos_table
+  [OK] 0.2.3  Trait: RegistraAuditoria (Pattern de sigainv2)
+
+================================================================================
+PRERREQUISITOS DEL PROYECTO
+================================================================================
+  [OK] Laravel 12.x + Filament v5.4+
+  [OK] Script Base: crear2.ps1 v21.1 (ULTIMATE + Audit)
+  [OK] Base de Datos: MySQL 8.x con soporte JSON
+================================================================================
+
+================================================================================
+BLOQUE 1 — ENTIDADES MAESTRAS Y GEOGRAFÍA
+================================================================================
+
+[!!] 1.1 — Geografía Colombia (Data Base)
+------------------------------------------------------
+  [OK] 1.1.1  [INMUTABLE] Migración: 0001_01_01_000004_create_departamentos_table
+  [OK] 1.1.2  [INMUTABLE] Migración: 0001_01_01_000005_create_ciudades_table
+  [OK] 1.1.3  Seeder: Departamentos y Ciudades (DANE)
+
+[!!!] 1.2 — Personas y Organización
+------------------------------------------------------
+  [OK] 1.2.1  [INMUTABLE] Migración: 0001_01_01_000006_create_clientes_table
+  [OK] 1.2.2  [INMUTABLE] Migración: 0001_01_01_000007_create_proveedores_table
+  [OK] 1.2.3  [INMUTABLE] Migración: 0001_01_01_000008_create_empresa_table
+  [OK] 1.2.4  Recurso: ClienteResource (Gestión Ventas)
+  [OK] 1.2.5  Recurso: ProveedorResource (Gestión Compras)
+  [OK] 1.2.6  Recurso: EmpresaResource (Configuración Global)
+
+================================================================================
+BLOQUE 2 — CONFIGURACIÓN TÉCNICA DEL SISTEMA
+================================================================================
+
+[!!] 2.1 — Parámetros Globales (Grupo: Configuración)
+------------------------------------------------------
+  [OK] 2.1.1  Migración/Recurso: UnidadesMedida (Und, Kg, Mts, etc.)
+  [ ] 2.1.2  Migración/Recurso: Categorias (Árbol jerárquico)
+  [ ] 2.1.3  Migración/Recurso: Marcas (Branding productos)
+  [OK] 2.1.4  Migración/Recurso: Impuestos (IVA, Retenciones)
+  [OK] 2.1.5  Migración/Recurso: FormasPago (Contado, Crédito, etc.)
+  [ ] 2.1.6  Migración/Recurso: Numeraciones (Resoluciones DIAN/Consecutivos)
+
+================================================================================
+BLOQUE 3 — INVENTARIO Y CATÁLOGO DE PRODUCTOS
+================================================================================
+
+[!!!] 3.1 — Estructura de Almacenamiento
+------------------------------------------------------
+  [ ] 3.1.1  Migración/Recurso: Bodegas (Puntos de almacenamiento)
+  [ ] 3.1.2  Migración: create_productos_table (Costo promedio, stock min, seriales)
+  [ ] 3.1.3  Recurso: ProductoResource (Catálogo maestro)
+
+[!!!] 3.2 — Control de Stock Real (Arquitectura StockService)
+------------------------------------------------------
+  [ ] 3.2.1  Migración: create_stock_bodegas_table (Pivot Producto-Bodega)
+  [ ] 3.2.2  Migración: create_stock_bodega_lotes_table (Traza por lotes/vencimiento)
+  [ ] 3.2.3  Migración: create_stock_bodega_serials_table (Control unitario)
+  [ ] 3.2.4  Migración: create_movimientos_inventario_table (Kardex detallado)
+
+================================================================================
+BLOQUE 4 — MÓDULO DE VENTAS (DOCUMENTOS SALIDA)
+================================================================================
+
+[!!!] 4.1 — Ciclo de Venta Comercial
+------------------------------------------------------
+  [ ] 4.1.1  Migración/Recurso: Cotizaciones (Borrador -> Aceptada)
+  [ ] 4.1.2  Migración/Recurso: Remisiones (Afecta Stock -> Facturación Pendiente)
+  [ ] 4.1.3  Migración/Recurso: Ventas (Facturación definitiva)
+  [ ] 4.1.4  Service: VentaService (Lógica de confirmación, reverso y lotes)
+
+================================================================================
+BLOQUE 5 — MÓDULO DE COMPRAS (DOCUMENTOS ENTRADA)
+================================================================================
+
+[!!!] 5.1 — Abastecimiento
+------------------------------------------------------
+  [ ] 5.1.1  Migración/Recurso: Compras (Ingreso de mercancía)
+  [ ] 5.1.2  Service: CompraService (Actualización de costo promedio ponderado)
+
+================================================================================
+BLOQUE 6 — TESORERÍA, CAJAS Y PAGOS
+================================================================================
+
+[!!] 6.1 — Gestión Financiera
+------------------------------------------------------
+  [ ] 6.1.1  Migración/Recurso: Bancos (Cuentas financieras)
+  [ ] 6.1.2  Migración/Recurso: Cajas (Puntos de recaudo efectivo)
+  [ ] 6.1.3  Migración: create_movimientos_cajas_table (Ingresos/Egresos)
+  [ ] 6.1.4  Migración/Recurso: PagoClientes (Recaudo Cartera)
+  [ ] 6.1.5  Migración/Recurso: PagoProveedores (Pago Cuentas por Pagar)
+
+================================================================================
+BLOQUE 7 — PROCESOS ESPECIALES DE INVENTARIO
+================================================================================
+
+[!!] 7.1 — Logística y Producción
+------------------------------------------------------
+  [ ] 7.1.1  Migración/Recurso: Traslados (Movimiento entre bodegas)
+  [ ] 7.1.2  Migración/Recurso: Transformaciones (Fórmulas y Ensamble de productos)
+  [ ] 7.1.3  Migración/Recurso: Devoluciones (Garantías y Reversos)
+
+================================================================================
+BLOQUE 8 — AJUSTES Y CALIBRACIÓN (AUDITORÍA FÍSICA)
+================================================================================
+
+[!] 8.1 — Conciliación de Inventario
+------------------------------------------------------
+  [ ] 8.1.1  Migración/Recurso: AjustesInventario (Mermas, Daños, Sobrantes)
+  [ ] 8.1.2  Migración/Recurso: ConteosFisicos (Inventario General / Ciego)
+
+================================================================================
+BLOQUE 9 — REPORTES, NOTIFICACIONES Y UX
+================================================================================
+
+[!!] 9.1 — Inteligencia de Negocio
+------------------------------------------------------
+  [ ] 9.1.1  Reporte: Kardex por Producto (Trazabilidad completa)
+  [ ] 9.1.2  Reporte: Inventario Valorizado (Costo vs Cantidad)
+  [ ] 9.1.3  Reporte: Cartera por Edades (Cuentas por cobrar)
+
+================================================================================
+RESUMEN DE PROGRESO GLOBAL
+================================================================================
+  MIGRACIONES CREADAS     : 0 / 49
+  MODELOS CREADOS         : 0 / 49
+  RECURSOS FILAMENT       : 0 / 26 (Estimados)
+  VERSION SCRIPT BASE     : v21.0 ULTIMATE
+================================================================================

@@ -1,0 +1,211 @@
+================================================================================
+  CHECKLIST DE AUDITORIA DE CODIGO
+  Stack: Laravel 13 + Filament v5 + PHP 8.4 + MySQL
+Patron: Resources + Services + PdfController + ExcelController
+   Sin APIs. Sin Form Requests. Eloquent puro + selectRaw en reportes.
+   Database drivers: MySQL (default) / SQLite
+   Ultima actualizacion: 2026-05-03
+================================================================================
+
+OBJETIVO
+--------
+Detectar errores de codificacion ANTES de desplegar.
+NO cubre logica de negocio — eso va en tests (Pest).
+Enfocada en los puntos donde este patron de desarrollo falla con frecuencia:
+copy-paste entre modulos, enums mal usados, selectRaw sin bindings,
+soft deletes ignorados en queries manuales, y transacciones incompletas.
+
+PRIORIDADES
+-----------
+  [C] Critico — Error garantizado en produccion.           BLOQUEA deploy.
+  [A] Alto    — Datos incorrectos o silenciosamente malos.  BLOQUEA deploy.
+  [M] Medio   — Degradacion silenciosa o warning.           Registrar, no bloquea.
+
+ESTADOS
+-------
+  [ ] Pendiente   [OK] Aprobado   [FAIL] Fallo   [N/A] No aplica
+
+
+================================================================================
+PASO 0 — IDENTIFICAR ARCHIVOS MODIFICADOS
+================================================================================
+
+  git diff --name-only HEAD
+  git diff --name-only --cached
+  (o consultar Historico.txt / TaskList.txt del ciclo)
+
+  [ ] Lista de archivos modificados documentada
+
+
+================================================================================
+PASO 1 — CLASIFICAR POR TIPO
+================================================================================
+
+  [ ] Models
+  [ ] Services
+  [ ] Filament Resources / Schemas / Tables
+  [ ] Filament Pages / Widgets (reportes con selectRaw)
+  [ ] Views Blade PDF
+  [ ] PdfController / ExcelController
+  [ ] Migrations
+  [ ] Enums
+  [ ] Exporters (Filament Exporters)
+  [ ] Commands Artisan (fb:procesar, etc.)
+
+
+================================================================================
+PASO 2 — REGLAS
+================================================================================
+
+--------------------------------------------------------------------------------
+REGLA 0 — SEPARACIÓN DE RESPONSABILIDADES [C]          BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+  [ ] Las Pages de Filament (Pages/Widgets) contienen únicamente lógica de UI y delegación.
+  [ ] No hay lógica de persistencia, cálculos o reglas de negocio en los archivos de Filament.
+  [ ] Los Observers centralizan reacciones a eventos del modelo.
+  [ ] Los Services orquestan transacciones multi-tabla y lógica compleja.
+
+--------------------------------------------------------------------------------
+REGLA 1 — ESQUEMA vs CODIGO  [C]                          BLOQUEA deploy si FAIL
+Toda columna referenciada debe existir en la migracion real.
+
+  [ ] Tablas tocadas por el archivo identificadas
+  [ ] Migraciones de cada tabla abiertas y comparadas
+  [ ] Cada columna referenciada existe en la migracion real
+
+
+--------------------------------------------------------------------------------
+REGLA 2 — selectRaw / whereRaw — BINDINGS OBLIGATORIOS  [C]  BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+  [ ] Sin variables interpoladas en whereRaw() / havingRaw() / orderByRaw()
+  [ ] Sin variables interpoladas en groupByRaw()
+  [ ] Enums en queries raw usan ->value
+  [ ] Fechas y filtros de usuario pasados como bindings
+
+
+--------------------------------------------------------------------------------
+REGLA 3 — NULL SAFETY  [C]                                BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Sin cadenas ->relacion->campo sin ?->
+  [ ] Callbacks en map(), each(), mapWithKeys() usan ?->
+  [ ] formatStateUsing() y closures de Filament usan ?->
+  [ ] Vistas Blade PDF usan ?-> en todas las relaciones
+
+
+--------------------------------------------------------------------------------
+REGLA 4 — ENUMS (BackedEnum PHP 8.x)  [C]                 BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Sin Enum como clave de array asociativo
+  [ ] Iteraciones usan ->value o ->label() directamente sobre el enum
+  [ ] Modelos sin $casts del enum usan ->value en queries
+  [ ] Raw queries siempre usan ->value
+
+
+--------------------------------------------------------------------------------
+REGLA 5 — IMPORTS Y NAMESPACES FILAMENT  [C]              BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Todos los use statements verificados contra la version instalada
+  [ ] Sin imports de namespaces de versiones anteriores
+  [ ] Sin imports sin usar
+
+
+--------------------------------------------------------------------------------
+REGLA 6 — TIPOS Y CASTEO MONETARIO  [A]                   BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Sin $table->float() para valores monetarios
+  [ ] Sin comparaciones === con float
+  [ ] ->currency() en lugar de ->money() en Resources y Exporters
+  [ ] number_format() con 4 parametros en vistas Blade PDF
+
+
+--------------------------------------------------------------------------------
+REGLA 7 — SOFT DELETES EN QUERIES  [A]                    BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Sin DB::table() sobre modelos con SoftDeletes sin whereNull('deleted_at')
+  [ ] Reportes y widgets usan Eloquent o filtran deleted_at explicitamente
+  [ ] selectRaw sobre tablas con SoftDeletes incluye deleted_at IS NULL
+
+
+--------------------------------------------------------------------------------
+REGLA 11 — TRANSACCIONES — ATOMICIDAD  [C]                BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Toda operacion multi-tabla usa DB::transaction()
+  [ ] Efectos secundarios (stock, caja, auditoria, movimientos) dentro de la tx
+  [ ] Excepciones dentro de la tx no quedan silenciadas con catch vacio
+
+
+--------------------------------------------------------------------------------
+REGLA 14 — PERFORMANCE PARA BAJO HARDWARE  [M]            REGISTRAR
+--------------------------------------------------------------------------------
+  [ ] Paginacion establecida en 10 o 25 para tablas grandes
+  [ ] Widgets pesados usan $isLazy = true
+  [ ] Calculos en Schemas precargan relaciones para evitar N+1
+  [ ] Campos reactivos (live) tienen loadingIndicator()
+
+
+--------------------------------------------------------------------------------
+REGLA 21 — PREVENCIÓN DE N+1 (EAGER LOADING) [C]         BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Uso de `with([...])` para todas las relaciones conocidas en loops.
+  [ ] Evaluación de `Model::automaticallyEagerLoadRelationships()` (Laravel 13).
+  [ ] `Model::preventLazyLoading(!app()->isProduction())` activo en AppServiceProvider.
+
+--------------------------------------------------------------------------------
+REGLA 22 — ÍNDICES DE LLAVES FORÁNEAS [C]                BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Uso de `foreignId()->constrained()` o `$table->index('columna_id')`.
+
+--------------------------------------------------------------------------------
+REGLA 23 — ÍNDICES COMPUESTOS [A]                        BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Identificación de filtros frecuentes (ej. `proveedor_id` + `codigo_proveedor`).
+
+--------------------------------------------------------------------------------
+REGLA 25 — PROCESAMIENTO DE GRANDES DATASETS [A]         BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+  [ ] Uso de `chunk()`, `chunkById()` o `lazy()` para iteraciones masivas.
+  [ ] Sin `all()` o `get()` en tablas que crecen indefinidamente.
+
+--------------------------------------------------------------------------------
+REGLA 30 — CICLO TDD Y CALIDAD DE TESTS [A]              BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Asegurar que cada funcionalidad tenga respaldo de tests robustos.
+
+  [ ] Uso extensivo de Factories (`Modelo::factory()`) para datos de prueba.
+  [ ] Uso de `RefreshDatabase` para asegurar entorno limpio.
+  [ ] Aislamiento de servicios externos vía `Http::fake()`, `Mail::fake()`, etc.
+  [ ] Cobertura de casos de error (stock insuficiente, saldos negativos).
+
+
+================================================================================
+PASO 3 — VERIFICACION CRUZADA
+================================================================================
+
+  [ ] Toda columna en codigo         ↔  migracion real abierta           (R1)
+  [ ] Todo selectRaw/whereRaw        ↔  sin variables interpoladas        (R2)
+  [ ] Todo can('string')             ↔  string en RoleSeeder              (R10)
+  [ ] Todo Service multi-tabla       ↔  dentro de DB::transaction()       (R11)
+  [ ] Performance bajo hardware      ↔  paginacion y lazy loading        (R14)
+  [ ] Optimización de Datos          ↔  Eager loading e índices          (R21, R22)
+  [ ] Calidad de Pruebas             ↔  Factories y Fakes activos        (R30)
+
+
+================================================================================
+PASO 4 — RESUMEN DEL CICLO
+================================================================================
+
+  Archivos auditados:  ___________________________________
+  Fecha:               2026-05-03
+  Ciclo / tarea:       Optimización Integral y TDD
+
+  Reglas aplicadas:    ___  de 15
+  OK: ___   FAIL: ___   N/A: ___   M: ___
+
+  DECISION:
+  [ ] APROBADO  — Todos los [C] y [A] en OK.
+  [ ] BLOQUEADO — Hay FAIL en [C] o [A]. Corregir antes de deploy.
+
+
+================================================================================
+FIN DEL CHECKLIST DE CODIGO
+================================================================================

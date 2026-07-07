@@ -1,0 +1,1160 @@
+===============================================================================
+SESION 30 — 2026-05-12 — FIX SUBIDA DE IMAGENES + DISPLAY BUGS
+===============================================================================
+
+OBJETIVO:
+  Diagnosticar y corregir error "Path must not be empty" al subir imagenes
+  (logo empresa, avatar usuario, imagenes producto) + bugs de visualizacion.
+
+--- CAUSA RAIZ (SUBIDA) --------------------------------------------------------
+
+  PHP upload_tmp_dir = c:/windows/temp NO era escribible por Apache
+  -> PHP no podia guardar el archivo temporal -> tmp_name vacio
+  -> fopen('', 'r') -> "Path must not be empty" en Livewire FileUploadController
+
+  Confirmado en: github.com/livewire/livewire/discussions/8304
+
+  FIX:
+    php.ini linea 848: upload_tmp_dir =F:/www/laragon/tmp
+    (directorio temporal de Laragon, siempre escribible)
+
+--- 13 BUGS DE VISUALIZACION (DISCO INCORRECTO) -------------------------------
+
+  Las imagenes se suben al disco `directo` (public/images/...) pero se
+  intentaban mostrar desde el disco `public` (storage/app/public/...).
+
+  Archivos corregidos (se agrego ->disk('directo') o Storage::disk('directo')):
+
+  | Archivo                                          | Cambio                          |
+  |--------------------------------------------------|---------------------------------|
+  | config/filesystems.php                           | line_ending (Pint)              |
+  | config/livewire.php                              | line_ending (Pint)              |
+  | app/Filament/Resources/Empresas/Tables/EmpresasTable.php | disk('public') -> disk('directo') |
+  | app/Filament/Resources/Productos/Tables/ProductosTable.php | +->disk('directo') en ImageColumn |
+  | app/Filament/Resources/Productos/Schemas/ProductoInfolist.php | +->disk('directo') en ImageEntry |
+  | app/Filament/Resources/UserResource.php (table)  | +->disk('directo') en ImageColumn avatar |
+  | app/Filament/Resources/UserResource.php (infolist) | +->disk('directo') en ImageEntry avatar |
+  | app/Models/User.php                              | Storage::url() -> Storage::disk('directo')->url() |
+  | app/Providers/Filament/AdminPanelProvider.php    | Storage::url() -> Storage::disk('directo')->url() |
+  | app/Providers/Filament/ClientePanelProvider.php  | Storage::url() -> Storage::disk('directo')->url() |
+  | resources/views/pdf/documento.blade.php          | Storage::disk('directo')->url() |
+  | resources/views/pdf/kardex.blade.php             | Storage::disk('directo')->url() |
+  | resources/views/pdf/conteo.blade.php             | Storage::disk('directo')->url() |
+  | resources/views/pdf/listado.blade.php            | Storage::disk('directo')->url() |
+
+--- AVATAR DE PERFIL NO SE GUARDABA --------------------------------------------
+
+  El plugin filament-edit-profile guarda el avatar en la columna `avatar_url`,
+  pero NO estaba en $fillable del modelo User -> Eloquent descartaba el campo
+  silenciosamente al hacer update().
+
+  FIX: agregado 'avatar_url' al $fillable en app/Models/User.php
+
+--- VERSION ---------------------------------------------------------------------
+  3.07 (sin cambio - correcciones internas)
+
+===============================================================================
+FIN SESION 30
+===============================================================================
+
+===============================================================================
+SESION 31 — 2026-05-12 — CONTEOS FISICOS + BADGES + SANITIZACION
+===============================================================================
+
+OBJETIVO:
+  Revisar y mejorar modulo Conteo Fisico, estandarizar badges de navegacion,
+  aplicar sanitizacion de datos (trim + mayusculas) en formularios.
+
+--- CONTEOS FISICOS -----------------------------------------------------------
+
+  - costo_promedio ahora se asigna desde precio_compra al crear productos
+    (app/Services/ProductoService.php)
+  - Boton "Nuevo Producto" movido al footer del formulario (getFormActions)
+  - "Procesar e Inicializar Stock" renombrado a "Procesar"
+  - Reporte de Diferencias y Cerrar Conteo ocultos en saldo inicial
+  - Bodega por defecto = Bodega Principal (Bodega::principal())
+  - BodegasSeeder corregido: ahora incluye es_principal=true
+  - Unidad de Medida default "Unidad" (id=1) en quick create
+  - Nombre/Categoria/Marca siempre mayusculas + trim
+
+--- BADGES DE NAVEGACION -------------------------------------------------------
+
+  33 Resources actualizados con el patron 0=rojo (danger) / >=1=verde (success).
+  - 23 resources: getNavigationBadgeColor anadido
+  - 9 resources: colores warning/info corregidos a success/danger
+  - Cotizaciones: badge siempre visible (antes oculto cuando 0)
+  - APP_ENV=production -> local
+
+--- SANITIZACION DE DATOS ------------------------------------------------------
+
+  Creado trait App\Models\Traits\SanitizesAttributes:
+  - Trim automatico en todos los campos string
+  - Mayusculas automaticas en campo "nombre"
+  Aplicado a 12 modelos: Producto, Categoria, Marca, Bodega, Cliente,
+  Proveedor, UnidadMedida, Caja, FormaPago, Impuesto,
+  FormulaTransformacion, Empresa
+
+--- MFA ------------------------------------------------------------------------
+
+  - Corregido bug: (bool) env('MFA_REQUIRED') convertia "false" string -> true
+  - Ahora usa filter_var() con FILTER_VALIDATE_BOOLEAN
+  - Default cambiado a true (seguro por defecto en produccion)
+
+--- VISTAS PUBLICADAS ----------------------------------------------------------
+
+  - vendor:publish --force para filament-actions views
+  - Corregido error "getSlideOverPosition does not exist"
+  - Causa: vistas publicadas de version anterior de Filament
+
+--- TESTS ----------------------------------------------------------------------
+
+  - ClienteResourceTest: corregidas 3 aserciones por uppercase automatico
+  - 12 tests de ConteoFisicoService + ProductoService pasan OK
+
+--- VERSION --------------------------------------------------------------------
+  3.07 (sin cambio)
+
+===============================================================================
+FIN SESION 31
+===============================================================================
+
+===============================================================================
+SESION 32 — 2026-05-12 — BUMP VERSION v3.8.0
+
+OBJETIVO:
+  Ajustar versión del proyecto a v3.8.0 tras revisión del historial git.
+
+--- ANALISIS DE VERSION --------------------------------------------------------
+
+  - Tag git v3.7.0 confirma version 3.07
+  - Despues del tag: commits en main con cambios de infraestructura
+    (dependencias, .gitignore, arquitectura)
+  -   config/app.php ya reflejaba 'version' => 'v3.8.0'
+  - Contexto.txt y bitacora desactualizados (aun mostraban v3.7.0)
+
+--- CAMBIOS INCLUIDOS EN v3.8.0 (desde v3.7.0) ---------------------------------
+
+  Sesiones 28-31:
+  - Excel en Conteo Fisico (descarga plantilla + importacion)
+  - Switch "IVA Incluido" en formulario de Compras
+  - Optimizacion de Formulas de Transformacion + Quick Create
+  - Finalizacion modulo Transformaciones (persistencia costos, bloqueo)
+  - Fix subida de imagenes (upload_tmp_dir + disco directo)
+  - Fix 13 bugs de visualizacion (disk('directo'))
+  - Avatar de perfil no se guardaba (avatar_url en fillable)
+  - Conteos Fisicos: costo_promedio en creacion, badges navegacion
+  - Sanitizacion de datos (trait SanitizesAttributes en 12 modelos)
+  - MFA: fix (bool)env('MFA_REQUIRED') con filter_var
+  - 33 Resources con badges de navegacion corregidos (0=rojo, >=1=verde)
+  - Vistas filament-actions publicadas (fix getSlideOverPosition)
+
+  Commits git (post-tag v3.7.0):
+  - Arquitectura: Implementacion de .gitignore estricto y limpieza de dependencias
+  - Fix: Mover dependencias de lenguaje a require principal
+
+--- VERSION --------------------------------------------------------------------
+   v3.7.0 -> v3.8.0  (sessions 28-31 + git infraestructura)
+
+================================================================================
+
+===============================================================================
+SESION 33 — 2026-05-13 — REVISION TRANSFORMACIONES: FIXES, TABS, COSTOS
+===============================================================================
+
+OBJETIVO:
+  Revisar y corregir el modulo de Transformaciones: filtro de producto final,
+  calculo de cantidades, costos, proteccion de formulas, y tabs de listado.
+
+--- CAMBIOS REALIZADOS ---------------------------------------------------------
+
+  1. FILTRO PRODUCTO FINAL (TransformacionForm + FormulaTransformacionForm)
+     - Ahora siempre filtra tipo_producto = 'manufacturado' sin importar
+       el tipo de transformacion (antes solo para fabricacion)
+     - Quick create tambien crea productos como manufacturado siempre
+
+  2. FORMULA: AUTO CAPITALIZE + NOMBRE DESDE PRODUCTO
+     - nombre de formula se capitaliza al salir del campo (live onBlur)
+     - al seleccionar producto final, auto-completa el nombre de la formula
+
+  3. FIX: FALTABAN IMPORTS Categoria / UnidadMedida
+     - Error 500 al hacer quick create desde FormulaTransformacionForm
+     - Agregados use statements faltantes
+
+  4. FIX: CAMPOS DISABLED EN DETALLES (TransformacionForm)
+     - Los campos disabled() no se dehidrataban al guardar
+     - Agregado ->dehydrated(true) a tipo_linea, producto_id, lote,
+       cantidad, costo_unitario
+
+  5. PROTECCION FORMULAS USADAS
+     - Agregado getTieneTransformacionesAttribute() en FormulaTransformacion
+     - Verifica si la formula tiene transformaciones asociadas
+     - canEdit/canDelete bloquean formulas con transformaciones o bloqueadas
+
+  6. BOTON REVERTIR EN VISTA (ViewTransformacion)
+     - Antes solo estaba en EditTransformacion (inaccesible si confirmada)
+     - Agregado action revertir con mismo comportamiento que edit
+
+  7. FIX: QUANTIDAD DE INSUMOS (EditTransformacion mount)
+     - mount() creaba detalles con $detalle->cantidad sin multiplicar
+     - Corregido: $detalle->cantidad * cantidad_a_producir
+
+  8. FIX: GETFILTEREDTABLEQUERY (ListTransformacions tabs)
+     - Tabs usaban null como key en el array -> error 500
+     - Reemplazado por string keys ('todas', 'borrador', etc.)
+     - Eliminado null => Tab en todas las 10 listviews que lo usaban
+
+  9. FIX: AFTERSAVE VS AFTERCREATE (CreateTransformacion)
+     - CreateRecord usa afterCreate(), NO afterSave()
+     - afterSave() era codigo muerto -> los detalles se creaban sin
+       multiplicar la cantidad por cantidad_a_producir
+     - Repeater detalles ahora con ->dehydrated(false) para evitar
+       doble escritura (form + afterCreate)
+
+  10. VERIFICACION COSTOS TRANSFORMACION #3
+      - 5 combos, 10 DDR3 consumidos (2 por combo)
+      - Costo unitario combo: $98.000 (aprobado)
+      - CPP calculado correctamente: $98.000
+      - Calculo funciona con multiples insumos
+
+  11. TABS: 10 LISTVIEWS CORREGIDAS
+      - UserResource, ClienteResource, ConteoFisicos, AjusteInventarios,
+        Devoluciones, Traslados, ProveedorResource, Numeracions, Cajas,
+        Bodegas
+      - Cambio: null => Tab('Todos') -> 'todos' => Tab('Todos')
+
+--- VERSION --------------------------------------------------------------------
+  v3.8.0 -> v3.8.1  (fixes transformaciones, tabs 10 listviews)
+
+===============================================================================
+FIN SESION 33
+===============================================================================
+
+===============================================================================
+SESION 34 — 2026-05-13 — REFACTORIZACION DDD: LOGICA DE NEGOCIO A SERVICES
+===============================================================================
+
+OBJETIVO:
+  Auditar y migrar logica de negocio desde Forms/Pages hacia Services,
+  siguiendo Domain-Driven Design (logica en Services, UI solo presentacion).
+
+--- AUDITORIA ------------------------------------------------------------------
+
+  Se revisaron 70+ archivos PHP en app/Filament/. Se identificaron 11 Hallazgos
+  HIGH de logica de negocio en la capa de presentacion.
+
+--- SERVICIOS CREADOS ----------------------------------------------------------
+
+  1. PrecioService (NUEVO)
+     - calcularPrecioConDescuento(Producto, ?Cliente): float
+       Centraliza descuento a cliente (antes en VentaForm, RemisionForm,
+       CotizacionForm — triplicado)
+     - calcularPrecioVentaSugerido(float): float
+       Formula: precio_compra / (1 - margen/100)
+       (antes en ProductoForm x2)
+     - calcularPrecioConMargen(float): float
+       Formula: precio_compra * (1 + margen/100)
+       (antes en EditProducto — formula INCONSISTENTE con la anterior)
+
+  2. FormulaTransformacionService (NUEVO)
+     - calculateAndSetCosts(array): array
+       Reemplaza logica duplicada en CreateFormulaTransformacion y
+       EditFormulaTransformacion (mutateFormDataBeforeCreate/Save)
+
+  3. DevolucionService (NUEVO)
+     - anular(Devolucion, ?string): void
+       Delegacion hacia el modelo (antes llamado directo desde Table)
+
+--- SERVICIOS ACTUALIZADOS -----------------------------------------------------
+
+  4. CostoService
+     - +resolveCostoUnitario(?Producto): float
+       Costo promedio con fallback a precio_compra
+       (antes inline en TransformacionForm x2, AjusteInventarioForm x2)
+
+  5. TransformacionService
+     - +cargarDetallesDesdeFormula(Transformacion): void
+       Carga detalles faltantes desde la formula al editar
+       (antes en EditTransformacion::mount con DB writes)
+     - +reapplyFormulaIfNeeded(Transformacion): void
+       Re-aplica formula solo si cambio formula_id o cantidad
+       (antes logica en EditTransformacion::afterSave)
+     - +actualizarPrecioProductoFinal(Transformacion): void
+       Actualiza precio_venta del producto final segun costos
+       (antes en CreateTransformacion::afterCreate y EditTransformacion)
+
+--- FORMULARIOS/PAGES ACTUALIZADOS ---------------------------------------------
+
+  6. VentaForm, RemisionForm, CotizacionForm
+     - Reemplazado descuento inline por PrecioService
+
+  7. ProductoForm (x2 ocurrencias)
+     - Reemplazado calculo de precio por PrecioService
+
+  8. EditProducto
+     - Reemplazado calculo de precio por PrecioService (formula corregida)
+
+  9. CreateFormulaTransformacion, EditFormulaTransformacion
+     - Reemplazado calculo costos por FormulaTransformacionService
+
+  10. TransformacionForm (x2 ocurrencias)
+      - Reemplazado resolve costo por CostoService
+
+  11. CreateTransformacion, EditTransformacion
+      - afterCreate/afterSave/mount ahora delegan en TransformacionService
+
+  12. AjusteInventarioForm (x2 ocurrencias)
+      - Reemplazado resolve costo por CostoService
+
+  13. DevolucionesTable
+      - Reemplazado llamada directa a modelo por DevolucionService
+
+--- VERSION --------------------------------------------------------------------
+  v3.8.1  (sin cambio)
+
+===============================================================================
+FIN SESION 34
+===============================================================================
+
+===============================================================================
+SESION 35 — 2026-05-13 — REORGANIZACION GRUPOS + DEVOLUCIONES COMPRAS
+===============================================================================
+
+OBJETIVO:
+  Reorganizar grupos de navegacion y crear estructura basica de
+  Devoluciones en Compras.
+
+--- GRUPOS REORGANIZADOS -------------------------------------------------------
+
+  ORDEN NUEVO:
+  1. Administracion
+  2. Configuracion
+  3. Inventario (se mueven Conteos Fisicos y Ajustes desde Operaciones)
+  4. Formulas de Transformacion
+  5. Caja
+  6. Bancos
+  7. Compras
+  8. Ventas (se mueve Devoluciones desde Operaciones)
+  9. Reportes
+
+  Grupo Operaciones eliminado (quedo vacio).
+
+  CAMBIOS REALIZADOS:
+  - Devoluciones: Operaciones -> Ventas (sort=5)
+  - Conteos Fisicos: Operaciones -> Inventario (sort=6)
+  - Ajustes Inventario: Operaciones -> Inventario (sort=7)
+  - Notas: sort corregido de 2 a 6 (evita conflicto con Remisiones)
+  - AdminPanelProvider: eliminado grupo Operaciones, agregado Reportes
+
+--- DEVOLUCIONES EN COMPRAS (ESQUELETO) ----------------------------------------
+
+  CREADO:
+  - Migracion: devoluciones_compras + detalles_devoluciones_compras
+  - Modelos: DevolucionCompra, DetalleDevolucionCompra
+  - Resource: DevolucionCompraResource (grupo Compras, sort=3)
+  - Form, Table, Pages (List, Create, Edit) — basicos
+
+  Pendiente: definir logica de negocio (confirmar, anular, stock, cartera)
+
+--- VERSION --------------------------------------------------------------------
+  v3.8.2 -> v3.8.3  (reorganizacion grupos + devoluciones compras skeleton)
+
+===============================================================================
+FIN SESION 35
+===============================================================================
+================================================================================
+SESION 36 — 2026-05-13 — MODULO CAJAS: DDD, TRASLADOS, ENUMS, INMUTABILIDAD
+================================================================================
+
+OBJETIVO:
+  Implementar y refactorizar el modulo Cajas con DDD basico: Enums para
+  dominios, Services para logica de negocio, movimientos inmutables,
+  y traslados entre cajas/banco desde la UI.
+
+--- ENUMS CREADOS ---------------------------------------------------------------
+
+  1. CajaTipo (app/Enums/CajaTipo.php)
+     - cases: caja_general, caja_menor, caja_sucursal, caja_pos
+     - label(), color(), icon()
+     - Reemplaza arrays hardcodeados en CajaForm y CajasTable
+
+  2. TrasladoDestinoTipo (app/Enums/TrasladoDestinoTipo.php)
+     - cases: caja, banco
+     - label(), color(), icon()
+     - Usado en MovimientoCajaForm para selector condicional
+
+  3. CajaCategoria (app/Enums/CajaCategoria.php)
+     - 10 cases: saldo_inicial, venta, compra, pago_cliente,
+       pago_proveedor, gasto_operativo, nomina, prestamo,
+       otro_ingreso, otro_egreso
+     - label(), tipoMovimiento()
+     - Reemplaza TextInput libre por Select en MovimientoCajaForm
+
+--- MIGRACIONES -----------------------------------------------------------------
+
+  - 2026_03_05_000001_create_cajas_table.php
+    -> Agregado 'caja_pos' al ENUM tipo
+
+  - 2026_03_05_000002_create_movimientos_cajas_table.php
+    -> Agregadas columnas: traslado_destino_tipo (varchar 10),
+       traslado_destino_id (unsignedBigInteger)
+    -> Migration add ejecutada en BD, luego integrada a principal
+
+--- CAJAS -----------------------------------------------------------------------
+
+  - CajaService::crearCaja(array): Caja (NUEVO)
+    -> Crea la caja + movimiento ingreso 'saldo_inicial' si > 0
+    -> CreateCaja::handleRecordCreation() delega en el service
+  - CajaForm actualizado con CajaTipo enum
+  - CajasTable actualizado con CajaTipo enum
+
+--- MOVIMIENTOS DE CAJA ---------------------------------------------------------
+
+  - Traslado a otra caja (CajaService::trasladarACaja) (NUEVO)
+    -> Crea traslado en origen + ingreso en destino, transactional
+    -> Guarda referencia cruzada via traslado_destino_* y documento_*
+  - Traslado a banco mejorado con destino traslado_destino_*
+  - MovimientoCajaForm: campos condicionales para traslados
+    -> Tipo Destino (Caja/Banco) -> Selector de destino
+    -> Categoria como Select con opciones de CajaCategoria enum
+  - CreateMovimientoCaja: traslados delegados a CajaService
+  - MovimientoCajasTable: columna Destino visible desde md
+
+--- INMUTABILIDAD DE MOVIMIENTOS ------------------------------------------------
+
+  - MovimientoCajaResource::canEdit() = false
+  - MovimientoCajaResource::canDelete() = false
+  - EditAction removido de ViewMovimientoCaja
+  - DeleteAction removido de EditMovimientoCaja
+
+--- OBSERVER CORREGIDO ----------------------------------------------------------
+
+  - MovimientoCajaObserver: traslado ahora resta en recalculo de saldos
+    (antes sumaba como ingreso — bug)
+  - MovimientoCaja::calcularSaldo() incluye traslados como egreso
+
+--- MORPH MAP -------------------------------------------------------------------
+
+  - AppServiceProvider::boot() registra Relation::morphMap()
+    para que trasladoDestino() resuelva 'caja'/'banco' correctamente
+
+--- TESTS -----------------------------------------------------------------------
+
+  - 4 tests de ResourceSmokeTest pasan OK
+  - Pint aplicado sin errores
+
+--- VERSION ---------------------------------------------------------------------
+   v3.8.3 -> v3.8.4  (modulo cajas completo con DDD)
+
+================================================================================
+FIN SESION 36
+================================================================================
+================================================================================
+SESION 37 — 2026-05-14 — MODULO BANCOS: DDD, ENUMS, TRASLADOS, INMUTABILIDAD
+================================================================================
+
+OBJETIVO:
+  Refactorizar modulo Bancos con DDD siguiendo el mismo patron de Cajas:
+  Enums para dominios, BancosService, Observer, movimiento inmutable,
+  y traslados entre bancos/caja desde la UI.
+
+--- ENUMS CREADOS ---------------------------------------------------------------
+
+  1. BancoTipoCuenta (app/Enums/BancoTipoCuenta.php)
+     - cases: ahorros, corriente
+     - label(), color(), icon()
+     - Reemplaza array hardcodeado en BancoForm y BancosTable
+
+  2. BancoCategoria (app/Enums/BancoCategoria.php)
+     - 8 cases: consignacion, retiro, transferencia, nota_credito,
+       nota_debito, cheque, otro_ingreso, otro_egreso
+     - label(), tipoMovimiento()
+     - Reemplaza TextInput libre por Select en MovimientoBancoForm
+
+  3. MovimientoBancoTipo (app/Enums/MovimientoBancoTipo.php)
+     - cases: deposito, retiro, transferencia
+     - label(), color(), icon()
+     - Usado en formulario y tabla
+
+--- MIGRACIONES -----------------------------------------------------------------
+
+  - 2026_02_24_050300_create_movimientos_bancos_table.php
+    -> Agregadas columnas: traslado_destino_tipo (varchar 10),
+       traslado_destino_id (unsignedBigInteger)
+    -> Migration add ejecutada en BD, luego integrada a principal
+
+--- BANCOS ----------------------------------------------------------------------
+
+  - BancosService.php (NUEVO) separado de CajaService
+    -> crearBanco(): crea banco + movimiento deposito si saldo_inicial > 0
+    -> registrarDeposito(): ingreso sin validacion de saldo
+    -> registrarRetiro(): egreso con lockForUpdate y validacion saldo
+    -> registrarTransferenciaSaliente(): entre cuentas propias
+    -> trasladarACaja(): banco -> caja (retiro en banco + ingreso en caja)
+  - CreateBanco: handleRecordCreation() delega en BancosService
+  - Banco modelo: getSaldoActualAttribute(), movimientos() HasMany
+  - Campos moneda y codigo_swift ocultos del form/tabla (ver F6 Tasklist)
+
+--- MOVIMIENTOS BANCARIOS -------------------------------------------------------
+
+  - MovimientoBancoForm: formulario funcional con select de tipo, categoria,
+    destino condicional para transferencias (caja/banco), referencia, concepto
+  - CreateMovimientoBanco: deposito/retiro via service, transferencia via
+    registrarTransferenciaSaliente() o trasladarACaja() segun destino
+  - MovimientoBanco modelo: trasladoDestino() MorphTo, calcularSaldo()
+  - MovimientoBancoTable: columna Destino, Categoria, Concepto
+  - MovimientoBancoInfolist: eliminado formaPago (innecesario en bancos)
+  - forma_pago_id eliminado del form (movimientos bancarios son siempre
+    electronicos, el efectivo se maneja desde Caja)
+
+--- OBSERVER CREADO -------------------------------------------------------------
+
+  - MovimientoBancoObserver (app/Observers/MovimientoBancoObserver.php)
+    -> Auto-asigna saldo_actual al crear
+    -> Recalcula saldos posteriores al editar/eliminar
+    -> Registrado en AppServiceProvider
+
+--- INMUTABILIDAD ---------------------------------------------------------------
+
+  - MovimientoBancoResource: canEdit() = false, canDelete() = false
+  - Solo pagina view y create disponibles
+
+--- CAJASERVICE: METODO MOVIDO --------------------------------------------------
+
+  - CajaService::trasladarDeBanco() movido a BancosService::trasladarACaja()
+    (cada service es responsable de su dominio)
+
+--- MORPH MAP -------------------------------------------------------------------
+
+  - Relation::morphMap() en AppServiceProvider ya registraba 'caja'/'banco'
+    -> MovimientoBanco.trasladoDestino() lo reutiliza
+
+--- FUTURAS IMPLEMENTACIONES AGREGADAS ------------------------------------------
+
+  - F6: Cuentas Internacionales / Pasarelas de Pago (Tasklist.txt)
+  - F7: Tarjetas de Credito Corporativas (Tasklist.txt)
+
+--- TESTS -----------------------------------------------------------------------
+
+  - 4 tests de ResourceSmokeTest pasan OK
+  - Pint aplicado sin errores
+
+--- VERSION ---------------------------------------------------------------------
+   v3.8.4 -> v3.8.5  (modulo bancos completo con DDD)
+
+================================================================================
+FIN SESION 37
+===============================================================================
+SESION 38 — 2026-05-14 — FIX BADGES NAVEGACION: SIN FILTROS + REVISION CAJA/BANCO
+===============================================================================
+
+OBJETIVO:
+  Corregir badges del menu de navegacion para que muestren el total de
+  registros sin filtros. Revisar integridad de movimientos Caja→Banco.
+
+--- BADGES CORREGIDOS ------------------------------------------------------------
+
+  8 recursos tenian filtros en getNavigationBadge() que no reflejaban
+  el total de registros. Corregidos a count() simple:
+
+  1. CajaResource: where('activo', true)->count() -> count()
+  2. MovimientoCajaResource: whereDate('fecha_movimiento', today())
+     -> count(). Tooltip 'Movimientos de hoy' eliminado.
+  3. UserResource: where('email', '!=', 'joseforozco@gmail.com')
+     -> count()
+  4. CotizacionResource: where('estado', 'pendiente') -> count()
+  5. NotaResource: where('estado', 'borrador') -> count()
+  6. TrasladoResource: where('estado', TrasladoEstado::BORRADOR->value)
+     -> count(). Tooltip e import TrasladoEstado removidos.
+  7. AuditoriaResource: whereDate('created_at', today()) -> count()
+  8. AuditoriaDocumentoResource: whereDate('created_at', today()) -> count()
+
+  getNavigationBadgeColor() tambien corregido en todos (exists() sin filtro).
+
+--- REVISION CAJA → BANCO --------------------------------------------------------
+
+  - Verificados 5 movimientos_cajas y 4 movimientos_bancos en BD
+  - Traslados id=3,4 (May 14) creados con version anterior sin cross-ref
+    en lado caja (documento_tipo=NULL). El lado banco SI tiene la ref.
+  - Traslado id=5 (May 15) correcto con cross-ref bilateral.
+  - Codigo actual de CajaService::trasladarABanco() ya incluye
+    $movCaja->update() para cross-reference bilateral (fix en f5a7448).
+  - BancosService con todos los metodos correctos desde su creacion.
+  - Saldos verificados correctos en ambos lados.
+
+--- VERSION ---------------------------------------------------------------------
+   v3.8.5 -> v3.8.6  (badges sin filtros + revision caja/banco)
+
+================================================================================
+  - Footer: "SIGAInv es desarrollado por SIGA Software © YYYY.
+    Todos los derechos reservados. vX.Y.Z"
+    (lang/vendor/filament-footer/es + welcome.blade.php)
+
+FIN SESION 38
+===============================================================================
+SESION 39 — 2026-05-14 — PAGOS ↔ CAJA/BANCO + FORMATO MONETARIO
+===============================================================================
+
+OBJETIVO:
+  Conectar el módulo de pagos (proveedores/clientes) con los movimientos
+  financieros reales (caja/banco). Unificar formato monetario en toda la app.
+
+--- QUICK CREATE PROVEEDOR ----------------------------------------------------
+
+  - CompraForm: createOptionModalHeading('Nuevo Proveedor')
+  - CompraForm: unique validation en documento y email del proveedor
+  - CompraForm: fix departamento_id/ciudad_id NOT NULL (default 54/889)
+
+--- COMPRA CONFIRMADA → COSTO PROMEDIO ---------------------------------------
+  
+  - Fix: CompraService::confirmar() no calculaba CPP si stockDespues <= 0
+  - Agregado else para stock cero/negativo: asigna costo de entrada directo
+  - Corregido producto id=1 manualmente (costo_promedio 102k → 130k)
+
+--- COMPRA FORM: VISIBILIDAD DE CAMPOS ----------------------------------------
+
+  - Lote: visible/requerido solo si producto.exige_lote
+  - Serial: visible/requerido solo si producto.exige_serial + empresa.usa_seriales
+  - Vencimiento: visible/requerido solo si producto.exige_lote
+  - Reorganizado layout repeater: columns(4), 50/25/25 primera fila
+  - Campos condicionales cambiados a disabled() para visualizar layout
+  - Fix: import App\Models\Empresa faltante
+
+--- PROVEEDOR SALDO ------------------------------------------------------------
+
+  - CompraService::confirmar(): incrementa proveedor.saldo al confirmar compra
+  - PagoDistribucionService::distribuirPagoProveedor(): decrementa proveedor.saldo
+  - PagoDistribucionService::revertirPagoProveedor(): restaura proveedor.saldo
+  - Corregidos datos: proveedor saldo 130k, compra #2026 saldo_pendiente 0
+
+--- PRODUCTO SERVICE: MAYÚSCULAS DDD ------------------------------------------
+
+  - ProductoService::crear(): mb_strtoupper en nombre (regla de negocio)
+  - SanitizesAttributes trait: red de seguridad en modelo (saving event)
+  - ProductoForm: afterStateUpdated mantiene feedback visual
+
+--- FORMATO MONETARIO UNIFICADO ------------------------------------------------
+
+  - 22 archivos: currency('COP') → money('COP', divideBy: 1)
+  - money('COP') sin param → money('COP', divideBy: 1)
+  - Verificado: 0 ocurrencias residuales en Resources + Pages + Widgets
+
+--- PAGOS → CAJA / BANCO (DDD) ------------------------------------------------
+
+  Migración: caja_id FK en pago_proveedores y pago_clientes
+
+  Modelos: PagoProveedor + PagoCliente → caja() BelongsTo + fillable
+
+  Formas de pago activas (seeder actualizado):
+    - Efectivo → caja_id requerido
+    - Transferencia, Cheque, TD, Nequi, Daviplata, PSE → banco_id requerido
+    - TC, Crédito Directo, Compensación → activo=false
+  
+  Forms (PagoProveedorForm + PagoClienteForm):
+    - caja_id visible/requerido si requiere_banco=false (filtrado sin caja_pos)
+    - banco_id visible/requerido si requiere_banco=true
+    - Validación: saldo_actual >= monto antes de enviar
+
+  Services (DDD - validar antes de crear):
+    - PagoProveedorService::crear(): valida saldo → crea → distribuye → movimiento
+    - PagoClienteService::crear(): ídem + notificación email
+    - Todo en DB::transaction, sin withoutEvents para evitar doble observer
+
+  Observers (adelgazados):
+    - PagoProveedorObserver: solo deleting → revertir distribución + movimiento
+    - PagoClienteObserver: created → notificación fallback; deleting → revertir
+
+  CreateRecord pages: handleRecordCreation() → delega al Service
+
+  Movimientos financieros automáticos:
+    Proveedor + Caja  → CajaService::registrarEgreso()
+    Proveedor + Banco → BancosService::registrarRetiro()
+    Cliente + Caja    → CajaService::registrarIngreso()
+    Cliente + Banco   → BancosService::registrarDeposito()
+
+--- VERSION ---------------------------------------------------------------------
+   v3.8.6 -> v3.9.0  (pagos integrados con caja/banco + DDD)
+
+FIN SESION 39
+================================================================================
+
+SESION 40 — 2026-05-16
+======================
+
+  Ajustes de Inventario — Inmutabilidad visual:
+    - ViewAjusteInventario: EditAction oculto si no es borrador
+    - Footer Filament: corregido doble "vv3.8.6" en traducción es/footer.php
+
+  Fórmulas de Transformación — Inmutabilidad y costos:
+    - TransformacionService::confirmar(): crea detalle producto (tipo_linea='producto')
+    - TransformacionService::confirmar(): recalcula costo_total y precio_sugerido de fórmula vinculada
+    - FormulaTransformacion: nuevo método recalculateCosts() vía CostoService
+    - CreateFormulaTransformacion: afterCreate() para recalcular con detalles ya persistidos
+    - FormulaTransformacionTable: ViewAction si inmutable, EditAction/DeleteAction ocultos
+    - ViewFormulaTransformacion: nueva página de solo lectura
+    - EditFormulaTransformacion: DeleteAction oculto si inmutable; afterSave()
+    - DB corregida: fórmula #1 costo_total=98000, precio_sugerido=115294
+
+  Márgenes de ganancia (Empresa):
+    - PrecioService: nuevo resolverMargen() → acota entre mínimo y default (máximo)
+    - CostoService: sin límites (libre para transformaciones)
+    - EmpresaForm: labels actualizados: mínimo / máximo-default
+
+  Compras — Flujo simplificado:
+    - CompraForm: eliminado estado_pago (siempre inicia pendiente)
+    - Compra: default estado_pago='pendiente', saldo_pendiente=0
+    - CompraResource: canEdit/canDelete requieren isEditable() (borrador)
+    - ComprasTable: EditAction solo visible en borrador
+    - CompraForm: sección Crédito del Proveedor reactiva (saldo, límite, disponible, días)
+    - Crédito informativo, no restrictivo (proveedor controla cupo)
+
+  Pagos a Proveedores — Mejoras:
+    - PagoProveedor: auto-número PAG-XXXXX en booted creating
+    - PagoProveedorService::crear(): genera número manual (withoutEvents salta boot)
+    - PagoProveedorService::crear(): forma_pago_id = 1 (Caja) o 2 (Banco)
+    - PagoProveedor: default forma_pago_id=1 en $attributes
+    - PagoProveedorForm: eliminado forma_pago_id, remplazado por origen (Caja/Banco)
+    - PagoProveedorForm: numero readonly "Automático", dehydrated(false)
+    - PagoProveedorForm: sección Deuda rediseñada (flex inline, sin tablas HTML)
+    - PagoProveedorResource: canEdit/canDelete → false (inmutables)
+    - PagoProveedorsTable: solo ViewAction, sin Edit/Delete/Bulk
+
+  Verificación de transacciones:
+    - Compras: 3 facturas (1 pagada, 1 parcial, 1 inconsistente)
+    - Pagos: 6 comprobantes, waterfall correcto a compra más antigua
+    - Caja PRINCIPAL: $530K → $30K; CAJA SUCURSAL: $70K → $0
+    - Nequi: $200K → $0; BanColombia: $100K → $0
+    - Proveedor JOSE OROZCO: saldo $1.902K
+
+--- VERSION ---------------------------------------------------------------------
+   v3.8.6 -> v3.9.1  (ajustes + fórmulas + compras + pagos mejorados)
+
+
+SESION 39 - 2026-05-16 - MODULO COTIZACIONES: ESTADOS, IMPRIMIBLES, QUICK-CREATES
+
+1. ENUM CotizacionEstado: +ENVIADA
+   - Nuevo estado 'enviada' entre PENDIENTE y ACEPTADA
+   - Transiciones: pendiente→enviada (al imprimir/enviar correo)
+   - ACEPTADA solo por sistema (al crear venta/remisión), no manual
+   - isEditable: PENDIENTE y ENVIADA
+   - fecha_vigencia default: hoy + 8 días
+
+2. HTML IMPRIMIBLE (reemplaza barryvdh/laravel-dompdf)
+   - resources/views/imprimir/documento.blade.php: wrapper con botón Imprimir + Cerrar
+   - PdfController::generarPDF() ahora retorna vista HTML, no PDF
+   - DocumentoPdfMail sin adjunto PDF (body HTML con resumen)
+   - Unificación: todos los botones Imprimir usan la misma ruta (pdf.venta/remision/cotizacion)
+
+3. QUICK-CREATES UNIFICADOS
+   - app/Filament/Forms/ClienteQuickCreate.php: form + using compartido entre Cotizacion/Venta/Remision
+   - app/Filament/Forms/ProveedorQuickCreate.php: form + using compartido (CompraForm)
+   - Sin selectores depto/ciudad (default Cúcuta/Norte de Santander)
+   - Notificación recordando completar datos en módulo respectivo
+
+4. FORMULARIOS
+   - Bodega default 1ra (Bodega Principal) en Cotizacion/Venta/Remision
+   - Sin createOptionForm de producto en Repeaters de Cotizacion/Venta/Remision
+   - Flujo Guardar e Imprimir: abre en nueva pestaña (window.open vía $this->js())
+
+5. TABS EN LISTVIEWS
+   - foreach en getTabs() causaba error 500 (newQueryWithoutRelationships on null)
+   - Convertidos a declaración estática: Ventas, Compras, Remisiones, Traslados,
+     ConteoFísicos, Ajustes, Devoluciones
+   - Cotizaciones: funcional con tabs + badges + conteos
+
+6. USERS: MIGRACIÓN + ENUM UserEstado
+   - Migration: add_estado_to_users_table (pendiente/activo/rechazado)
+   - UserEstado enum creado
+   - ListUsers tabs alineado con patrón Cotizaciones
+
+7. FIXES
+   - TypeError en PrecioService: cast (float) a $producto->precio_venta
+   - createOptionForm departamento: relationship() → options(Departamento::pluck())
+   - Vistas publicadas filament-tables eliminadas (obsoletas v4)
+   - Filtros SelectFilter redundantes con tabs: CotizacionsTable, ClienteResource, UserResource
+
+--- VERSION ---------------------------------------------------------------------
+   v3.9.1 -> v3.9.2  (cotizaciones, imprimibles, quick-creates, tabs)
+
+
+SESION 40 - 2026-05-16 - ENUMS EN DB, FIX TABS, CAJAS ESTADO
+
+1. ENUMS heroicon-m EN TODOS LOS ENUMS
+   - 10 enums actualizados: heroicon-o → heroicon-m
+   - Tabs usan ->icon($estado->icon()) y ->badgeColor($estado->color())
+   - where() en tabs SIEMPRE con string, NUNCA con instancia enum
+
+2. COLUMNAS estado VARCHAR → ENUM
+   - users: ENUM('pendiente','activo','inactivo','bloqueado')
+   - cajas: ENUM('activa','inactiva')
+   - conteos_fisicos: ENUM('abierto','cerrado','ajustado')
+   - ajustes_inventario: ENUM('borrador','confirmado','anulado')
+   - devoluciones_compras: ENUM('borrador','confirmada','anulada')
+   - Todas incorporadas a migraciones originales (Z1), add migrations eliminadas
+
+3. USERS: MIGRACION activo → estado
+   - UserEstado enum: PENDIENTE, ACTIVO, INACTIVO, BLOQUEADO
+   - UserService (DDD): desactivar(), aprobar(), rechazar()
+   - Login/Register actualizados a estado
+   - $fillable incluye estado + activo (causaba error silencioso)
+   - OPcache activo causaba archivos no refrescarse
+
+4. CAJAS: MIGRACION activo → estado
+   - CajaEstado enum: ACTIVA, INACTIVA
+   - Form, Table, Tabs actualizados
+   - Forms externos: where('estado', 'activa')
+
+5. TABS: SOLUCIÓN DEFINITIVA
+   - foreach en getTabs() causaba error newQueryWithoutRelationships
+   - Tab::make() con ->icon() NO es el problema
+   - Patrón correcto: declaración estática + enum para icon/color + string para where
+
+6. QUICK-CREATES UNIFICADOS (Sesión 39)
+   - ClienteQuickCreate, ProveedorQuickCreate
+
+7. HTML IMPRIMIBLE (Sesión 39)
+   - Reemplaza barryvdh/laravel-dompdf
+   - resources/views/imprimir/documento.blade.php
+   - PdfController retorna HTML, DocumentoPdfMail sin adjunto
+
+8. FILTROS REDUNDANTES ELIMINADOS
+   - SelectFilter::make('estado') en tablas con tabs de estado
+   - Cotizaciones, ConteoFisicos, Ajustes, Traslados, Bodegas
+
+--- VERSION ---------------------------------------------------------------------
+   v3.10.0 -> v3.11.0  (activo → estado en clientes, proveedores, numeraciones)
+
+   Z1 COMPLETADO: 0 migraciones add_*.
+
+=== SESIÓN 42: Unificación activo → estado (clientes, proveedores, numeraciones) ===
+
+1. PREVIO: RENUMERACIÓN CAJAS + SQLITE COMPAT
+   - cajas (2026_03_05 → 2026_02_24_040900) — antes de pago_clientes
+   - movimientos_cajas (2026_03_05 → 2026_02_24_041000)
+   - 4 migraciones con DB::statement ENUM → $table->enum() blueprint:
+     cajas, ajustes_inventario, conteos_fisicos, devoluciones_compras
+
+2. USERS: REGLA DE BORRADO
+   - User::hasRelatedRecords() — verifica 19 tablas transaccionales
+   - EditUser DeleteAction: visible(fn => canBeDeleted() && !hasRelatedRecords())
+   - UserResource::canDelete() valida canBeDeleted()
+
+3. CLIENTES: activo → estado
+   - Enums: ClienteEstado (ACTIVO, INACTIVO)
+   - Migración: boolean('activo') → enum('estado', ['activo','inactivo'])
+   - Model: fillable/casts actualizados
+   - Resource: Toggle→Select, TextEntry/TextColumn con badge+color
+   - ListClientes tabs, StatsWidget, Exporter
+   - Forms: PagoCliente, Cotizacion, Remision, Venta
+   - QuickCreate, Seeder, Factory
+   - Tests: ClienteTest, SeedersTest, ClienteResourceTest, MigrationsTest
+   - ADD migration temporal → ejecutada y eliminada (regla #13)
+
+4. PROVEEDORES: activo → estado
+   - Enums: ProveedorEstado (ACTIVO, INACTIVO)
+   - Ídem patrón clientes + Widget stats en ListProveedores
+   - Forms: CompraForm, PagoProveedorForm, ProveedorQuickCreate
+   - Tests: ProveedorTest, SeedersTest, MigrationsTest
+   - ADD migration temporal → ejecutada y eliminada
+
+5. NUMERACIONES: activo → estado
+   - Enums: NumeracionEstado (ACTIVO, INACTIVO)
+   - Ídem patrón: form (Toggle→Select), table (IconColumn→TextColumn badge),
+     tabs, SelectFilter con enum
+   - NumeracionService: 2 queries where('activo', true) → where('estado', ...)
+   - VentaResource::canCreate(): where('activo' → where('estado')
+   - Tests: NumeracionServiceTest, NumeracionConcurrencyTest
+   - ADD migration temporal → ejecutada y eliminada
+
+6. NUEVAS REGLAS CONTEXTO (internalizadas)
+   - #13: ADD migration → incorporar a principal → borrar ADD
+   - #14: Cambio tabla → actualizar recursos, modelos, enums, fillables
+   - #8 actualizada: migraciones a solicitud expresa
+
+--- VERSION ---------------------------------------------------------------------
+   v3.10.0 -> v3.11.0  (activo → estado en clientes, proveedores, numeraciones)
+
+   Z1 COMPLETADO: 0 migraciones add_*.
+   - add_caja_id_to_pago_tables → create_pago_proveedores + create_pago_clientes
+
+=== SESIÓN 43: Bodegas, Bancos, Transformaciones, Quick Create fix ===
+
+7. BODEGAS: activo → estado + es_principal oculto en create
+   - Enums: BodegaEstado (ACTIVO, INACTIVO)
+   - Form: es_principal hidden en create, Toggle→Select para estado
+   - Table: IconColumn→TextColumn badge
+   - Tabs, 10 forms externos actualizados
+   - Tests: 46/46 pasan
+
+8. BANCOS: activo → estado
+   - Enums: BancoEstado (ACTIVO, INACTIVO)
+   - ListBancos reparado: tabs con BancoEstado, imports correctos
+   - 4 forms externos actualizados
+   - Tests: 4/4 pasan
+
+9. QUICK CREATE: Categoria/Marca/UnidadMedida
+   - createOptionUsing: ::create() → ::firstOrCreate() (evita duplicados)
+   - options: estático → closure(fn() => ...) (refresca lista tras crear)
+   - Duplicado SMARTWATCH eliminado de BD
+
+10. TRANSFORMACIONES: revisión lógica completa
+    - Arquitectura 3-capas: Formula → Transformacion → Stock
+    - TransformacionDetalles NO es redundante (costo histórico, lote/serial, línea producto)
+    - Confirmar: descuenta insumos, produce final, auto-crea fórmula, recalcula CPP
+    - Revertir: devuelve insumos, descuenta final (solo Combo/Promo)
+    - Tests: flujo completo verificado sin errores
+
+--- VERSION ---------------------------------------------------------------------
+   v3.11.0 -> v3.12.0  (activo → estado en bodegas, bancos; quick create fix)
+
+
+=== SESIÓN 44: Unificación estado + estado_pago en Compras ===
+
+1. ENUM CompraEstado REESTRUCTURADO
+   - Nuevos casos: BORRADOR, REGISTRADA, PENDIENTE, PAGADA, ANULADA
+   - Borrador → Registrada → Pendiente → Pagada
+   - Registrada/Pendiente → Anulada (terminal con rollback de inventario)
+   - isEditable: solo BORRADOR
+   - isFinal: PAGADA y ANULADA
+   - Enum eliminado: CompraEstadoPago (ya no necesario)
+
+2. BASE DE DATOS
+   - Columna estado: ENUM('borrador','registrada','pendiente','pagada','anulada')
+   - Columna estado_pago: ELIMINADA
+   - Índice compras_proveedor_estado_idx: eliminado
+   - Migración principal (2026_02_24_040700) actualizada, ADD migration eliminada
+
+3. MODELO Compra
+   - Fillable: removido estado_pago
+   - Casts: removido estado_pago => CompraEstadoPago, solo estado => CompraEstado
+   - Attributes: removido default estado_pago
+   - validarConfirmable() → validarRegistrable()
+
+4. SERVICIO CompraService
+   - confirmar() → registrar() (nuevo nombre)
+   - Transiciones: compra.estado->validTransitions() actualizado a 5 estados
+   - marcarPagada(): ahora también limpia saldo_pendiente = 0
+   - anular(): revierte inventario si REGISTRADA (antes CONFIRMADA)
+   - Auditorías: 'confirm' → 'registrar', 'Compra confirmada' → 'Compra registrada'
+
+5. ACCIONES FILAMENT
+   - ConfirmarCompra → RegistrarCompra (nueva clase)
+   - MarcarPagada → RegistrarPago (nueva clase, con modal: origen caja/banco, monto fijo)
+   - RegistrarPago usa PagoProveedorService::crear() (valida saldo, distribuye, movimiento financiero)
+   - AnularCompra → visible en Borrador/Registrada/Pendiente, label "Cancelar Compra"
+   - Archivo MarcarPagada.php eliminado
+
+6. TABLA ComprasTable
+   - Columna estado con badge usando $state?->color() (enum)
+   - Filtro SelectFilter::make('estado')->options(CompraEstado::class)
+   - Edit visible en Borrador/Registrada/Pendiente
+   - Delete solo en Borrador
+
+7. LISTA Tabs
+   - 6 tabs: Todas, Borrador, Registrada, Pendiente, Pagada, Anulada
+   - ->icon(CompraEstado::X->icon()), ->badgeColor(CompraEstado::X->color())
+
+8. COMPRARESOURCE
+   - canEdit(): !isFinal() (antes isEditable(), permitía acceso a Registrada/Pendiente)
+   - canDelete(): isEditable() (solo Borrador)
+
+9. PAGODISTRIBUCIONSERVICE
+   - whereIn('estado_pago', ['pendiente','parcial']) → whereIn('estado', ['registrada','pendiente'])
+   - Updates: estado = PAGADA/PENDIENTE/REGISTRADA según saldo resultante
+
+10. WIDGETS / EXPORTER
+    - ComprasStatsWidget: CONFIRMADA → REGISTRADA + PENDIENTE
+    - ResumenGeneralWidget: CONFIRMADA → REGISTRADA + PENDIENTE
+    - CompraExporter: estado_pago → estado
+
+11. FACTORY / TESTS
+    - CompraFactory: removido estado_pago, nueva state registrada() y pendiente()
+    - CompraServiceTest: 23/23 tests pasan, confirmar → registrar
+    - DocumentoEstadoTransitionsTest: actualizado a nuevos estados
+
+--- VERSION ---------------------------------------------------------------------
+   v3.12.0 -> v3.13.0  (compras: unificación estado + estado_pago)
+
+===============================================================================
+SESION 31 — 2026-05-17 — NUMERACIÓN UNIFICADA + CONFIRMAR() REVIEW
+===============================================================================
+
+OBJETIVO: Unificar numeración en Cotizaciones, Remisiones y Ventas usando
+NumeracionService. Revisar flujo confirmar() en RemisionService y VentaService.
+Ajustar cotización → aceptada solo al confirmar, no al crear.
+
+COTIZACIONES
+- Cotizacion.php: eliminado booted() con numeración manual (COT-00001).
+  Ahora CotizacionObserver::creating() usa NumeracionService::obtenerSiguienteNumero('cotizacion')
+- CreateCotizacion.php: mount() verifica NumeracionService::tieneNumeracionActiva('cotizacion').
+  Si no existe, muestra Notification persistente con Action para crear numeración.
+- Bug fix: Filament v5 usa Filament\Actions\Action para notification actions (no Filament\Notifications\Actions\Action).
+
+REMISIONES
+- Remision.php: eliminado creating del booted() (numeración manual REM-00001).
+  Ahora RemisionObserver::creating() usa NumeracionService::obtenerSiguienteNumero('remision')
+- CreateRemision.php: mount() verifica NumeracionService::tieneNumeracionActiva('remision')
+  con notificación + acción para crear numeración.
+
+VENTAS
+- Venta.php: eliminado creating y updating del booted().
+  Numeración delegada a VentaObserver::creating().
+  Validación DIAN (resolucion_numero) movida a VentaService::confirmar().
+- VentaService::confirmar(): agregada validación de resolución DIAN antes de la transacción.
+
+BUG FIXES — OBSERVERS
+- RemisionObserver.php: agregado use Illuminate\Support\Facades\Auth (faltaba → fatal error)
+- VentaObserver.php: mismo fix de Auth
+
+COTIZACIÓN → ACEPTADA (flujo corregido)
+- RemisionObserver::created() eliminado — marcaba cotización aceptada al crear (borrador)
+- VentaObserver::created() eliminado — mismo bug
+- RemisionService::confirmar(): agrega CotizacionObserver::validateForUse + CotizacionService::marcarAceptada
+- VentaService::confirmar(): mismo patrón
+
+NOTIFICACIONES EN REMISIÓN
+- RemisionConfirmadaNotification.php (nuevo): notifica admins vía database al confirmar
+- RemisionService::confirmar(): agregadas StockBajoNotification + RemisionConfirmadaNotification
+  (mismo patrón que VentaService)
+
+CLIENTE::SALDO
+- PagoDistribucionService::distribuirPagoCliente(): $cliente->decrement('saldo', $monto)
+- PagoDistribucionService::revertirPagoCliente(): $cliente->increment('saldo', $monto)
+  (mismo patrón que proveedores)
+
+TESTS
+- 7 archivos de test actualizados: resolucion_numero agregado a numeraciones tipo venta
+  (LoteStockTest, ConcurrencyTest, RemisionVentaIntegrationTest, NumeracionServiceTest,
+   NumeracionConcurrencyTest, DevolucionTest, IdempotenciaConfirmacionTest,
+   PagoClienteObserverTest, VentaCostoUnitarioTest)
+- 106/115 tests pasan. 9 failures pre-existentes (8 PagoClienteObserverTest + 1 ResourceSmokeTest/Traslados)
+
+ARCHIVOS MODIFICADOS:
+app/Models/Cotizacion.php
+app/Models/Remision.php
+app/Models/Venta.php
+app/Observers/RemisionObserver.php
+app/Observers/VentaObserver.php
+app/Services/RemisionService.php
+app/Services/VentaService.php
+app/Services/PagoDistribucionService.php
+app/Filament/Resources/Cotizacions/Pages/CreateCotizacion.php
+app/Filament/Resources/Remisions/Pages/CreateRemision.php
+app/Notifications/RemisionConfirmadaNotification.php (NUEVO)
+tests/Feature/LoteStockTest.php
+tests/Feature/Services/ConcurrencyTest.php
+tests/Feature/Services/RemisionVentaIntegrationTest.php
+tests/Feature/Services/NumeracionServiceTest.php
+tests/Feature/Services/NumeracionConcurrencyTest.php
+tests/Feature/Domain/DevolucionTest.php
+tests/Feature/Services/IdempotenciaConfirmacionTest.php
+tests/Feature/Services/PagoClienteObserverTest.php
+tests/Feature/Ventas/VentaCostoUnitarioTest.php
+
+--- VERSION ---------------------------------------------------------------------
+   v3.13.0 -> v3.14.0  (numeración unificada + confirm() review + cliente saldo)
+
+===============================================================================
+SESION 32 — 2026-05-17 — PAGO CLIENTE + LISTVIEW REMISIONES
+===============================================================================
+
+OBJETIVO: Revisar y alinear módulo PagoCliente con PagoProveedor. Agregar columna
+estado en listview de remisiones. Implementar acción RegistrarPago en remisiones.
+
+REMISIONES — LISTVIEW
+- RemisionsTable.php: agregada columna 'estado' (borrador/confirmada/facturada/anulada)
+  con badge de colores desde RemisionEstado.
+- Columna 'estado_pago' renombrada a 'Pago'.
+- Filtros: agregado SelectFilter para 'estado' (Documento), 'estado_pago' (Pago).
+
+REMISIONES — REGISTRAR PAGO
+- RegistrarPago.php (nuevo): Action en EditRemision, visible solo en CONFIRMADA/FACTURADA
+  con estado_pago pendiente/parcial.
+- Modal: destino (caja/banco), caja_id/banco_id condicional, monto readOnly (saldo_pendiente).
+- Delega en PagoClienteService::crear(). Pago completo del documento.
+- Campo 'destino' renombrado desde 'origen' (el dinero ingresa, no sale).
+
+PAGO CLIENTE — ALINEACIÓN CON PAGO PROVEEDOR
+- PagoCliente.php: agregado booted() con auto-numeración RC-00001.
+- PagoClienteService.php: agregado generarNumero(). Eliminado validarSaldo()
+  (no necesario para ingresos).
+- PagoClienteObserver.php: eliminado created() — código muerto (Service usa withoutEvents()).
+- PagoClienteForm.php: campo 'numero' ahora disabled + dehydrated(false), auto-generado.
+
+ARCHIVOS MODIFICADOS:
+app/Models/PagoCliente.php
+app/Services/PagoClienteService.php
+app/Observers/PagoClienteObserver.php
+app/Filament/Resources/PagoClientes/Schemas/PagoClienteForm.php
+app/Filament/Resources/Remisions/Actions/RegistrarPago.php (NUEVO)
+app/Filament/Resources/Remisions/Pages/EditRemision.php
+app/Filament/Resources/Remisions/Tables/RemisionsTable.php
+
+--- VERSION ---------------------------------------------------------------------
+   v3.14.0 -> v3.14.1  (pago cliente alineado + listview remisiones + registrar pago)
+
+===============================================================================
+SESION 33 — 2026-05-18 — CLIENTE SALDO + FORM PAGO CLIENTE FORMAT
+===============================================================================
+
+OBJETIVO: Corregir Cliente::saldo (no se incrementaba al confirmar). Alinear
+formato de resumen de deuda en PagoClienteForm con PagoProveedorForm.
+
+CLIENTE::SALDO
+- RemisionService::confirmar(): agregado $remision->cliente?->increment('saldo', $remision->total)
+- VentaService::confirmar(): agregado $venta->cliente?->increment('saldo', $venta->total)
+- Ciclo completo: confirma → +saldo, paga → -saldo.
+
+PAGO CLIENTE FORM
+- Sección "Deuda Pendiente del Cliente" alineada con PagoProveedor:
+  - Flexbox inline en vez de HTML table.
+  - Columnas: Documento, Total, Pagado, Pendiente, Fecha.
+  - Colores: verde (pagado > 0), rojo (pendiente > 0).
+  - Total Deuda destacado en rojo.
+
+ARCHIVOS MODIFICADOS:
+app/Services/RemisionService.php
+app/Services/VentaService.php
+app/Filament/Resources/PagoClientes/Schemas/PagoClienteForm.php
+
+--- VERSION ---------------------------------------------------------------------
+   v3.14.1 -> v3.14.2  (cliente saldo + form pago cliente formato)
+
+===============================================================================
+SESION 34 — 2026-05-18 — FILTRO BORRADORES EN DEUDA PENDIENTE
+===============================================================================
+
+OBJETIVO: Excluir borradores del resumen de deuda y distribución de pagos.
+
+PAGO DISTRIBUCION
+- obtenerDocumentosPendientesCliente(): agregado ->whereNotIn('estado', [BORRADOR])
+  para ventas y remisiones. Ahora solo muestra documentos confirmados/facturados.
+- distribuirPagoCliente(): misma exclusión en la consulta de waterfall.
+
+VERIFICACIÓN FINAL REMISIONES
+- 3 remisiones confirmadas y pagadas: Stock 4→3→2→1 correcto.
+- 2 pagos RC-00001 ($276,856) y RC-00002 ($138,428) aplicados waterfall.
+- Cliente::saldo = 0 (ciclo confirmar + pagar balanceado).
+- Cotización COT-000001 aceptada.
+
+ARCHIVOS MODIFICADOS:
+app/Services/PagoDistribucionService.php
+
+--- VERSION ---------------------------------------------------------------------
+   v3.14.2 -> v3.14.3  (filtro borradores deuda pendiente + verificacion final remisiones)
+
+===============================================================================
+SESION 35 — 2026-05-18 — FILTRO COTIZACION ACEPTADA EN SELECTOR
+===============================================================================
+
+OBJETIVO: Excluir cotizaciones aceptadas del selector al crear remisiones.
+
+REMISION FORM
+- Selector cotizacion_id: cambiado de where(estado, pendiente OR aceptada) a
+  whereIn(estado, [PENDIENTE, ENVIADA]). Las aceptadas ya no aparecen.
+- Agregado import CotizacionEstado.
+
+ARCHIVOS MODIFICADOS:
+app/Filament/Resources/Remisions/Schemas/RemisionForm.php
+
+--- VERSION ---------------------------------------------------------------------
+   v3.14.3 -> v3.14.4  (excluir cotizaciones aceptadas del selector remisiones)

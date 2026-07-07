@@ -1,0 +1,80 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-05-16 21:20:48
+ Entorno   : local
+ Directorio: F:\www\web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------
+
+  Dropping all tables ........................................................................................ 2s DONE
+
+   INFO  Preparing database.  
+
+  Creating migration table .............................................................................. 58.34ms DONE
+
+   INFO  Running migrations.  
+
+  0001_01_01_000000_create_users_table ....................................................................... 1s DONE
+  0001_01_01_000001_create_cache_table ................................................................. 369.48ms DONE
+  0001_01_01_000002_create_jobs_table .................................................................. 627.29ms DONE
+  0001_01_01_000003_create_permission_tables ................................................................. 4s DONE
+  0001_01_01_000004_create_departamentos_table ......................................................... 387.65ms DONE
+  0001_01_01_000005_create_ciudades_table .............................................................. 447.05ms DONE
+  0001_01_01_000006_create_clientes_table .................................................................... 2s DONE
+  0001_01_01_000007_create_proveedores_table ........................................................... 883.52ms DONE
+  0001_01_01_000008_create_empresa_table ............................................................... 310.65ms DONE
+  2025_05_25_041509_create_auditorias_table ............................................................ 269.40ms DONE
+  2026_02_24_010100_create_unidades_medida_table ........................................................ 24.69ms DONE
+  2026_02_24_010200_create_categorias_table ............................................................ 219.46ms DONE
+  2026_02_24_010300_create_marcas_table ................................................................. 78.44ms DONE
+  2026_02_24_010400_create_impuestos_table .............................................................. 26.45ms DONE
+  2026_02_24_010500_create_formas_pago_table ............................................................ 96.26ms DONE
+  2026_02_24_010600_create_numeraciones_table .......................................................... 221.33ms DONE
+  2026_02_24_020100_create_bancos_table ................................................................ 234.93ms DONE
+  2026_02_24_020200_create_bodegas_table ............................................................... 665.51ms DONE
+  2026_02_24_030100_create_productos_table ................................................................... 1s DONE
+  2026_02_24_030200_create_stock_bodegas_table ......................................................... 642.20ms DONE
+  2026_02_24_030201_create_stock_bodega_lotes_table .................................................... 434.29ms DONE
+  2026_02_24_030202_create_stock_bodega_serials_table .................................................. 446.20ms DONE
+  2026_02_24_030300_create_movimientos_inventario_table ...................................................... 2s DONE
+  2026_02_24_040100_create_cotizaciones_table ................................................................ 3s DONE
+  2026_02_24_040200_create_detalle_cotizaciones_table ........................................................ 5s DONE
+  2026_02_24_040300_create_remisiones_table .................................................................. 1s DONE
+  2026_02_24_040400_create_detalle_remisiones_table .......................................................... 1s DONE
+  2026_02_24_040500_create_ventas_table ...................................................................... 1s DONE
+  2026_02_24_040600_create_detalle_ventas_table ........................................................ 545.35ms DONE
+  2026_02_24_040700_create_compras_table ............................................................... 937.98ms DONE
+  2026_02_24_040800_create_detalle_compras_table ....................................................... 697.49ms DONE
+  2026_02_24_050100_create_pago_clientes_table ......................................................... 527.05ms FAIL
+
+   Illuminate\Database\QueryException 
+
+  SQLSTATE[HY000]: General error: 1824 Failed to open the referenced table 'cajas' (Connection: mysql, Host: localhost, Port: 3306, Database: sigainv, SQL: alter table `pago_clientes` add constraint `pago_clientes_caja_id_foreign` foreign key (`caja_id`) references `cajas` (`id`) on delete set null)
+
+  at vendor\laravel\framework\src\Illuminate\Database\Connection.php:841
+    837▕             $exceptionType = ($isUniqueConstraintError = $this->isUniqueConstraintError($e))
+    838▕                 ? UniqueConstraintViolationException::class
+    839▕                 : QueryException::class;
+    840▕ 
+  ➜ 841▕             $exception = new $exceptionType(
+    842▕                 $this->getNameWithReadWriteType(),
+    843▕                 $query,
+    844▕                 $this->prepareBindings($bindings),
+    845▕                 $e,
+
+  1   vendor\laravel\framework\src\Illuminate\Database\Connection.php:587
+      PDOException::("SQLSTATE[HY000]: General error: 1824 Failed to open the referenced table 'cajas'")
+
+  2   vendor\laravel\framework\src\Illuminate\Database\Connection.php:587
+      PDOStatement::execute()
+
+----------------------------------------
+ ExitCode  : 1 (FALLO)
+ Duracion  : 43,05s
+ Log       : F:\www\web\sigaInv\logs\migration_20260516_212048.log
+========================================

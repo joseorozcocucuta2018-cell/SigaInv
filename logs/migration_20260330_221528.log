@@ -1,0 +1,41 @@
+========================================
+ MIGRATION LOG
+========================================
+ Fecha     : 2026-03-30 22:15:28
+ Entorno   : local
+ Directorio: D:\www\Web\sigaInv
+ SkipSeed  : False
+ Force     : False
+========================================
+
+ Ejecutando: php artisan migrate:fresh --force --seed
+----------------------------------------
+
+  Dropping all tables ........................................... 35s FAIL
+
+   Illuminate\Database\QueryException 
+
+  SQLSTATE[HY000] [2002] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión (Connection: mysql, Host: localhost, Port: 3306, Database: sigainv, SQL: SET FOREIGN_KEY_CHECKS=1;)
+
+  at vendor\laravel\framework\src\Illuminate\Database\Connection.php:838
+    834▕             $exceptionType = $this->isUniqueConstraintError($e)
+    835▕                 ? UniqueConstraintViolationException::class
+    836▕                 : QueryException::class;
+    837▕ 
+  ➜ 838▕             throw new $exceptionType(
+    839▕                 $this->getNameWithReadWriteType(),
+    840▕                 $query,
+    841▕                 $this->prepareBindings($bindings),
+    842▕                 $e,
+
+  1   vendor\laravel\framework\src\Illuminate\Database\Connectors\Connector.php:67
+      PDOException::("SQLSTATE[HY000] [2002] No se puede establecer una conexión ya que el equipo de destino denegó expresamente dicha conexión")
+
+  2   vendor\laravel\framework\src\Illuminate\Database\Connectors\Connector.php:67
+      PDO::connect("mysql:host=localhost;port=3306;dbname=sigainv", "root", Object(SensitiveParameterValue), [])
+
+----------------------------------------
+ ExitCode  : 1 (FALLO)
+ Duracion  : 149,53s
+ Log       : D:\www\Web\sigaInv\logs\migration_20260330_221528.log
+========================================

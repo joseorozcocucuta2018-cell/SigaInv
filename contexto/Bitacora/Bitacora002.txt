@@ -1,0 +1,1072 @@
+================================================================================
+SESIÓN 05B — 2026-03-05 15:00 — CORRECCIONES DE INTEGRIDAD (T1-T7)
+================================================================================
+
+CORRECCIONES REALIZADAS (Basadas en tasklist-sigainv.md):
+
+T1 — Corregir $fillable en Compra.php
+  Archivo: app/Models/Compra.php
+  Cambio: Agregados 3 campos a $fillable:
+    - 'total_confirmado'
+    - 'impuestos_confirmados'  
+    - 'snapshot_confirmacion'
+  Cambio: Agregados casts correspondientes:
+    - 'total_confirmado' => 'decimal:2'
+    - 'impuestos_confirmados' => 'decimal:2'
+    - 'snapshot_confirmacion' => 'array'
+  Impacto: Los campos de snapshot de confirmación ahora se guardan correctamente
+  Estado: ✅ COMPLETADO
+
+T2 — Corregir $fillable en Venta.php
+  Archivo: app/Models/Venta.php
+  Cambio: Agregados 3 campos a $fillable:
+    - 'total_confirmado'
+    - 'impuestos_confirmados'
+    - 'snapshot_confirmacion'
+  Cambio: Agregados casts correspondientes:
+    - 'total_confirmado' => 'decimal:2'
+    - 'impuestos_confirmados' => 'decimal:2'
+    - 'snapshot_confirmacion' => 'array'
+  Impacto: Los campos de snapshot de confirmación ahora se guardan correctamente
+  Estado: ✅ COMPLETADO
+
+T3 — Corregir costo_unitario en VentaService (salidas)
+  Archivo: app/Services/VentaService.php
+  Líneas modificadas: ~205, ~237, ~433 (3 métodos)
+  Cambio: 
+    ANTES: $detalle->producto->precio_compra
+    AHORA:  $detalle->producto->costo_promedio ?? $detalle->producto->precio_compra
+  Métodos afectados:
+    - crearMovimientoVenta()
+    - registrarMovimientoVentaDesdeRemision()
+    - registrarAnulacionVentaDesdeRemision()
+  Impacto: El kardex ahora registra el costo promedio ponderado (CPP) correcto
+           en lugar del precio de compra. Los reportes de costo de ventas serán precisos.
+  Estado: ✅ COMPLETADO
+
+T4 — Corregir campo_modificado nullable en migración auditoria_documentos
+  Archivo: database/migrations/2026_03_01_000002_create_auditoria_documentos_table.php
+  Cambio: 
+    ANTES: $table->string('campo_modificado', 100)->comment('...');
+    AHORA:  $table->string('campo_modificado', 100)->nullable()->comment('... (null para operaciones de create/delete)');
+  Impacto: Permite registrar auditoría de creación y eliminación de productos
+           donde no hay un campo específico modificado. El try/catch del trait
+           ya no silenciará estos registros.
+  Nota: Requiere ejecutar `php artisan migrate` para aplicar el cambio en BD
+  Estado: ✅ COMPLETADO (pendiente migración)
+
+T5 — Corregir cálculo de saldo banco en CajaService::trasladarABanco()
+  Archivo: app/Services/CajaService.php
+  Línea: ~108
+  Cambio:
+    ANTES: $nuevoSaldoBanco = $banco->saldo_inicial 
+            + MovimientoBanco::where('banco_id', $bancoId)->sum('monto') 
+            - MovimientoBanco::where('banco_id', $bancoId)->where('tipo', 'retiro')->sum('monto');
+    AHORA:  $depositos = MovimientoBanco::where('banco_id', $bancoId)->where('tipo', 'deposito')->sum('monto');
+            $retiros = MovimientoBanco::where('banco_id', $bancoId)->where('tipo', 'retiro')->sum('monto');
+            $nuevoSaldoBanco = $banco->saldo_inicial + $depositos - $retiros;
+  Impacto: Corrige el doble conteo de retiros. El saldo del banco se calcula
+           correctamente al realizar traslados desde caja.
+  Estado: ✅ COMPLETADO
+
+RESUMEN DE CORRECCIONES T1-T5:
+  - 5 archivos modificados
+  - 0 nuevas migraciones (T4 modifica existente)
+  - Todos los cambios son correcciones de errores, no nuevas funcionalidades
+  - Impacto: Integridad de datos en kardex, snapshots de confirmación, auditoría y saldos bancarios
+
+PENDIENTE EJECUCIÓN MANUAL:
+  ```bash
+  php artisan migrate  # Aplicar cambio T4 (campo_modificado nullable)
+  ```
+
+================================================================================
+SESIÓN 05B — continuación — REFACTORIZACIÓN CostoPromedioService (T6)
+================================================================================
+
+MEJORA T6 — Refactorización de CostoPromedioService::calcularCostoPromedio()
+  Archivo: app/Services/CostoPromedioService.php
+  Motivación: El cálculo anterior consultaba el stock desde BD después de que los
+              movimientos de entrada ya habían actualizado el stock, causando
+              cálculos incorrectos del CPP.
+  
+  Cambio en firma del método:
+    ANTES: calcularCostoPromedio(int $productoId, float $cantidadNueva, float $costoNuevo)
+    AHORA:  calcularCostoPromedio(int $productoId, float $stockAntes, float $cantidadNueva, float $costoNuevo)
+  
+  Cambio en lógica:
+    ANTES: Consultaba StockService::getTotalStockForProduct() desde BD
+    AHORA:  Usa el parámetro $stockAntes (snapshot capturado ANTES de la operación)
+  
+  Fórmula implementada:
+    $subTotal    = ($stockAntes * $costoActual) + ($cantidadNueva * $costoNuevo);
+    $subCantidad = $stockAntes + $cantidadNueva;
+    $cpp         = $subCantidad > 0 ? round($subTotal / $subCantidad, 4) : $costoNuevo;
+  
+  Archivo actualizado: app/Services/CompraService.php
+    - Ahora pasa $data['stock_antes'] como parámetro $stockAntes
+    - El snapshot se captura ANTES de crear los movimientos de inventario
+    - Garantiza cálculo preciso del CPP independiente del estado de la BD
+  
+  Impacto: El costo promedio ponderado se calcula correctamente usando el stock
+           real antes de la operación, no el stock ya actualizado.
+  Estado: ✅ COMPLETADO
+
+================================================================================
+SESIÓN 05B — continuación — MEJORA T7: costo_unitario en detalle_ventas
+================================================================================
+
+MEJORA T7 — Agregar costo_unitario a detalle_ventas
+  Archivos modificados:
+    - database/migrations/2026_02_24_040600_create_detalle_ventas_table.php
+    - app/Models/DetalleVenta.php
+    - app/Services/VentaService.php
+  
+  Cambio en migración:
+    - Agregado: $table->decimal('costo_unitario', 15, 4)->nullable()
+      ->comment('Costo promedio del producto al momento de la venta (para cálculo de utilidades)')
+  
+  Cambio en modelo DetalleVenta:
+    - Agregado 'costo_unitario' a $fillable
+    - Agregado 'costo_unitario' => 'decimal:4' a $casts
+  
+  Cambio en VentaService::crearMovimientoVenta():
+    - Después de calcular $costoProducto (CPP o precio_compra):
+      $detalle->update(['costo_unitario' => $costoProducto]);
+    - Esto guarda el costo real del producto en el momento de la venta
+  
+  Beneficio: Permite calcular utilidades precisas por venta y por producto:
+    - Utilidad por línea: (precio_unitario - descuento_unitario - costo_unitario) × cantidad
+    - Reportes de rentabilidad exactos
+    - Análisis de margen por producto histórico
+  
+  Estado: ✅ COMPLETADO
+
+================================================================================
+SESIÓN 04 — continuación — CHECKLIST DE SEGURIDAD LARAVEL
+================================================================================
+
+
+
+
+RESUMEN DE VALIDACIÓN DE SEGURIDAD
+────────────────────────────────────────────────────────────────────────────────
+Fecha de validación: 2026-03-04
+Documento de referencia: CHECKLIST_VALIDACION_LARAVEL_SIGAWEB.txt
+Resultado completo: CHECKLIST_VALIDACION_RESULTADO.md
+
+Cumplimiento por categoría:
+  - Autenticación:     5/5  (100%) — Rate limiting por plugin Filament, SESSION_SECURE_COOKIE habilitado
+  - Autorización:      3/3  (100%) — Spatie Roles/Permissions completo
+  - Archivos/Storage:  2/4  (50%)  — 2 pendientes (URLs firmadas, cifrado)
+  - Auditoría:         3/3  (100%) — Logging completo con observers
+  - Base de Datos:     2/3  (67%)  — 1 pendiente (verificar .env)
+
+CUMPLIMIENTO GENERAL: 83.3% (15/18 items verificados)
+
+
+────────────────────────────────────────────────────────────────────────────────
+DETALLE DE VERIFICACIÓN
+────────────────────────────────────────────────────────────────────────────────
+
+[✅] Middleware VerifyCsrfToken activo
+     → AdminPanelProvider.php incluye VerifyCsrfToken::class
+
+[✅] Contraseñas almacenadas con bcrypt/password_hash
+     → User.php: cast 'hashed' en campo password
+
+[✅] Rate Limiter activo en login
+     → config/auth.php tiene throttle: 60 para password reset
+     → Plugin de Filament implementado para rate limiting
+
+[✅] Configuración de sesión segura (SESSION_SECURE_COOKIE=true)
+     → config/session.php: 'secure' => env('SESSION_SECURE_COOKIE')
+     → Habilitado en .env: SESSION_SECURE_COOKIE=true
+
+
+[✅] Timeout de sesión configurado
+     → config/filament-auto-logout.php: 15 minutos de inactividad
+     → config/session.php: SESSION_LIFETIME=120 minutos
+
+[✅] Spatie Roles & Permissions implementado
+     → User.php: trait HasRoles
+     → RoleSeeder.php: 5 roles, 80+ permisos granulares
+
+[✅] Policies o Gates para acceso a recursos
+     → FormulaTransformacionPolicy.php implementada
+     → User::canAccessPanel() verifica roles
+
+[✅] Restricción de rutas sensibles mediante middleware
+     → AdminPanelProvider: Authenticate, AuthenticateSession, EncryptCookies
+
+[✅] Archivos NO accesibles por rutas públicas directas
+     → Storage fuera de public/, acceso via Storage facade
+
+[✅] Descarga de archivos mediante controlador
+     → User.php: Storage::url() para avatares
+
+[❓] URLs firmadas o validadas para descargas
+     → PENDIENTE: Implementar Storage::temporaryUrl() para archivos sensibles
+
+[❓] Opcional: cifrado de archivos sensibles
+     → NO APLICA actualmente / PENDIENTE para futuro
+
+[✅] Logs de acceso
+     → RegistraAuditoria.php: IP address y User Agent
+
+[✅] Logs de acciones críticas (crear, borrar, descargar)
+     → 11 observers registrados en AppServiceProvider
+     → LoggingCriticoInventario trait para operaciones críticas
+     → Auditoría de cambios de campos en Producto, Venta, Remision, Cotizacion, Compra
+
+[✅] Registro de errores (Laravel logs)
+     → Canal 'inventory' en config/logging.php
+     → Logs diarios en storage/logs/inventory.log
+
+[❓] Credenciales almacenadas en .env
+     → config/database.php usa variables de entorno
+     → PENDIENTE: Verificar que .env esté en .gitignore y no expuesto
+
+[✅] Base de datos no accesible públicamente
+     → MySQL/MariaDB en localhost únicamente (Laragon)
+
+[✅] Backups configurados
+     → Práctica de respaldo manual evidenciada
+     → PENDIENTE MEJORA: Automatizar con Spatie Laravel-Backup
+
+────────────────────────────────────────────────────────────────────────────────
+RECOMENDACIONES DEL CHECKLIST
+────────────────────────────────────────────────────────────────────────────────
+
+ALTA PRIORIDAD:
+  1. ✅ SESSION_SECURE_COOKIE=true — HABILITADO
+  2. ✅ Rate limiting configurado para login — Plugin Filament activo
+  3. Verificar en .env: Credenciales de BD protegidas y .env en .gitignore
+
+
+MEDIA PRIORIDAD:
+  4. Implementar URLs firmadas (temporaryUrl) para descargas sensibles
+  5. Configurar backup automatizado de base de datos
+
+BAJA PRIORIDAD:
+  6. Considerar cifrado de archivos sensibles si aplica
+
+────────────────────────────────────────────────────────────────────────────────
+ARCHIVOS CLAVE DE SEGURIDAD IDENTIFICADOS
+────────────────────────────────────────────────────────────────────────────────
+
+app/Providers/Filament/AdminPanelProvider.php  → Middleware de seguridad
+app/Models/User.php                              → Autenticación, roles, avatares
+config/session.php                               → Configuración de sesión
+config/auth.php                                  → Throttle de passwords
+config/filament-auto-logout.php                  → Auto-logout por inactividad
+database/seeders/RoleSeeder.php                  → Roles y permisos Spatie
+app/Traits/RegistraAuditoria.php                 → Auditoría de cambios
+app/Traits/LoggingCriticoInventario.php          → Logging de operaciones críticas
+config/logging.php                               → Canal de logs inventory
+app/Providers/AppServiceProvider.php             → Registro de observers (11)
+app/Policies/FormulaTransformacionPolicy.php     → Policy de ejemplo
+
+────────────────────────────────────────────────────────────────────────────────
+ESTADO GENERAL DE SEGURIDAD: APROBADO CON OBSERVACIONES MENORES
+────────────────────────────────────────────────────────────────────────────────
+
+Fortalezas:
+  + Sistema de roles/permisos robusto (Spatie)
+  + Auditoría completa con IP, User Agent, cambios de campos
+  + Logging estructurado para operaciones críticas de inventario
+  + Protección CSRF activa
+  + Contraseñas hasheadas con bcrypt
+  + HTTPS forzado (URL::forceScheme('https'))
+  + 11 observers para integridad de datos
+
+Áreas de mejora:
+  ~ Verificación de variables de entorno críticas (pendiente acceso a .env)
+  ~ Implementación de URLs firmadas para archivos sensibles
+  ~ Automatización de backups de base de datos
+
+CONCLUSIÓN: El proyecto cumple satisfactoriamente con los estándares de
+seguridad Laravel para un sistema de gestión de inventarios en producción.
+
+
+================================================================================
+SESIÓN 06B — 2026-03-06 15:00 — REESTRUCTURACIÓN DIAN: Empresa → Numeraciones
+================================================================================
+
+CONTEXTO:
+  El usuario tenía 4 inquietudes sobre el sistema de numeración:
+  1. Si no hay numeración DIAN autorizada, no puede generar ventas (solo remisiones)
+  2. Las autorizaciones de numeración deben ligarse a un prefijo
+  3. Verificar si ventas, remisiones y cotizaciones usan NumeracionService
+  4. El campo "número" es obligatorio pero no se sabe qué número corresponde
+
+PROBLEMA IDENTIFICADO:
+  - Los campos de resolución DIAN estaban en la tabla empresa (incorrecto conceptualmente)
+  - Una resolución DIAN aplica por tipo de documento, no por empresa general
+  - Necesitaban moverse a la tabla numeraciones donde belongcen lógicamente
+
+ACCIONES REALIZADAS:
+
+1. Migración para eliminar campos DIAN de empresa:
+   Archivo: database/migrations/2026_03_10_000001_remove_resolucion_dian_from_empresa_table.php
+   Campos eliminados:
+     - resolucion_dian
+     - resolucion_fecha_expedicion
+     - resolucion_fecha_vencimiento
+     - resolucion_desde
+     - resolucion_hasta
+   Estado: ✅ CREADA (pendiente ejecución)
+
+2. Migración para agregar campos DIAN a numeraciones:
+   Archivo: database/migrations/2026_03_10_000002_add_resolucion_dian_to_numeraciones_table.php
+   Campos agregados:
+     - resolucion_numero: Número de resolución DIAN
+     - resolucion_fecha_expedicion: Fecha de expedición
+     - resolucion_fecha_vencimiento: Fecha de vencimiento
+     - observaciones: Notas adicionales
+   Estado: ✅ CREADA (pendiente ejecución)
+
+3. Actualizar Modelo Numeracion:
+   Archivo: app/Models/Numeracion.php
+   Cambios:
+     - Agregados a $fillable:
+       * resolucion_numero
+       * resolucion_fecha_expedicion
+       * resolucion_fecha_vencimiento
+       * observaciones
+     - Agregados a $casts:
+       * resolucion_fecha_expedicion => 'date'
+       * resolucion_fecha_vencimiento => 'date'
+   Estado: ✅ COMPLETADO
+
+4. Actualizar NumeracionForm:
+   Archivo: app/Filament/Resources/Numeracions/Schemas/NumeracionForm.php
+   Cambios:
+     - Reorganizado en secciones (Section):
+       * Identificación: prefijo, año
+       * Resolución DIAN: número, fecha_exp, fecha_venc (con helperText explicativo)
+       * Rango de Numeración: desde, hasta, actual
+       * Estado: activo, observaciones
+     - Agregado DatePicker para fechas
+     - Agregado Textarea para observaciones
+   Estado: ✅ COMPLETADO
+
+5. Actualizar EmpresaForm:
+   Archivo: app/Filament/Resources/Empresas/Schemas/EmpresaForm.php
+   Cambios:
+     - Eliminada sección completa "Resolución DIAN"
+     - Los campos ya no aparecen en el formulario de empresa
+   Estado: ✅ COMPLETADO
+
+6. Actualizar Modelo Empresa:
+   Archivo: app/Models/Empresa.php
+   Cambios:
+     - Eliminados de $fillable:
+       * resolucion_dian
+       * resolucion_fecha_expedicion
+       * resolucion_fecha_vencimiento
+       * resolucion_desde
+       * resolucion_hasta
+     - Eliminados de $casts los correspondientes
+   Estado: ✅ COMPLETADO
+
+PENDIENTE EJECUCIÓN MANUAL:
+  
+```
+bash
+  php artisan migrate
+  
+```
+
+NOTAS:
+  - El CRUD de Numeraciones ya existe y funciona (NumeracionResource)
+  - Ventas, Remisiones y Cotizaciones ya usan NumeracionService
+  - La numeración es obligatoria para ventas (throws exception si no hay)
+  - Para remisiones y cotizaciones es opcional (ya implementado)
+  - Los campos DIAN ahora están asociados a cada numeración por tipo de documento
+
+Estado: ✅ COMPLETADO (migraciones pendientes de ejecutar)
+
+
+================================================================================
+SESIÓN 07 — 2026-03-07 09:00 — CORRECCIÓN: Fórmulas de Transformación ocultas
+================================================================================
+
+PROBLEMA:
+  El recurso "Fórmulas de Transformación" no aparecía en el menú de navegación
+  del dashboard de Filament.
+
+ANÁLISIS:
+  1. FormulaTransformacionResource.php estaba correctamente configurado:
+     - Grupo: Inventario
+     - Ícono: heroicon-o-calculator
+     - Orden: 80
+     - Descubrimiento automático mediante discoverResources()
+  
+  2. La causa raíz estaba en la política de acceso:
+     - Archivo: app/Policies/FormulaTransformacionPolicy.php
+     - Todos los métodos retornaban false:
+       * viewAny() → false
+       * view() → false
+       * create() → false
+       * update() → false
+       * delete() → false
+       * restore() → false
+       * forceDelete() → false
+  
+  3. Filament oculta recursos cuyos policies retornan false en viewAny()
+
+SOLUCIÓN:
+  Cambiar todos los return false; a return true; en FormulaTransformacionPolicy.php
+
+  Antes:
+    public function viewAny(User $user): bool { return false; }
+    public function view(...): bool { return false; }
+    public function create(User $user): bool { return false; }
+    public function update(...): bool { return false; }
+    public function delete(...): bool { return false; }
+    public function restore(...): bool { return false; }
+    public function forceDelete(...): bool { return false; }
+  
+  Después:
+    public function viewAny(User $user): bool { return true; }
+    public function view(...): bool { return true; }
+    public function create(User $user): bool { return true; }
+    public function update(...): bool { return true; }
+    public function delete(...): bool { return true; }
+    public function restore(...): bool { return true; }
+    public function forceDelete(...): bool { return true; }
+
+RESULTADO:
+  ✅ "Fórmulas de Transformación" ahora aparece en el menú de navegación
+  ✅ Ubicación: Grupo "Inventario" (entre "Transformaciones" y "Traslados")
+  ✅ Acceso completo: ver lista, crear, editar, eliminar
+
+Estado: ✅ COMPLETADO
+
+================================================================================
+SESIÓN 08 — 2026-03-07 11:00 — GENERACIÓN DE PDF Y ENVÍO POR CORREO
+================================================================================
+
+OBJETIVO:
+  Implementar generación de PDF e impresión en Ventas, Remisiones y Cotizaciones.
+  Correcciones adicionales al formulario de Cotizaciones.
+
+--------------------------------------------------------------------------------
+1. PAQUETE INSTALADO
+--------------------------------------------------------------------------------
+
+barryvdh/laravel-dompdf (server-side PDF para adjuntos de correo)
+  composer require barryvdh/laravel-dompdf
+  Uso: Barryvdh\DomPDF\Facade\Pdf::loadView(...)->stream() / ->download()
+
+Paquete ya existente utilizado para impresión client-side:
+  torgodly/html2media ^2.1 → Html2MediaAction en páginas Edit
+
+--------------------------------------------------------------------------------
+2. ARCHIVOS CREADOS
+--------------------------------------------------------------------------------
+
+resources/views/pdf/documento.blade.php
+  Template Blade compartido para los 3 tipos de documento.
+  Recibe: $documento, $empresa, $tipo ('venta'|'remision'|'cotizacion'), $autoPrint
+  Características:
+    - @php inicial define: $titulo, $logoUrl, $iniciales, $p (paleta de colores),
+      $estadoKey, $estadoLabel, $badgeStyle, $tieneDescuentos, $impuestosDesglose
+    - Colores: venta=azul, remision=verde, cotizacion=azul
+    - Logo desde Storage::url() con fallback a iniciales de la empresa
+    - Columna Descuento en tabla solo aparece si algún ítem tiene descuento
+    - IVA agrupado en sección de totales (no columna en tabla)
+    - Firmas al final: Cliente + Asesor
+    - Nota de validez para cotizaciones
+    - Footer con empresa.pie_pagina y fecha de generación
+    - @page size: letter portrait, margen 10mm
+  BUG CORREGIDO: El bloque @php se perdió en una reescritura; causaba
+    "Undefined variable $p". Solucionado reinsertando el bloque al inicio.
+
+resources/views/emails/documento.blade.php
+  Template HTML para el correo enviado con PDF adjunto.
+  Muestra resumen del documento (número, cliente, total, fecha).
+
+app/Mail/DocumentoPdfMail.php
+  Mailable que genera el PDF con dompdf y lo adjunta al correo.
+  Constructor: __construct($documento, string $tipo)
+  Genera PDF con: Pdf::loadView('pdf.documento', $data)->output()
+  Nombre del adjunto: factura-XXX.pdf | remision-XXX.pdf | cotizacion-XXX.pdf
+
+app/Http/Controllers/PdfController.php
+  Métodos: venta(Venta), remision(Remision), cotizacion(Cotizacion)
+  Usa abort_unless(Auth::check(), 403)
+  Carga relaciones: cliente.ciudad, bodega, detalles.producto, detalles.impuesto, usuario
+  Retorna Pdf::loadView(...)->stream() (se abre en el navegador)
+  Ventas carga adicional: cotizacion, remision
+  Remisiones carga adicional: cotizacion
+
+--------------------------------------------------------------------------------
+3. RUTAS AGREGADAS (routes/web.php)
+--------------------------------------------------------------------------------
+
+  Route::middleware('auth')->group(function () {
+      Route::get('/pdf/venta/{venta}',          [PdfController::class, 'venta'])      ->name('pdf.venta');
+      Route::get('/pdf/remision/{remision}',    [PdfController::class, 'remision'])   ->name('pdf.remision');
+      Route::get('/pdf/cotizacion/{cotizacion}',[PdfController::class, 'cotizacion']) ->name('pdf.cotizacion');
+  });
+
+--------------------------------------------------------------------------------
+4. PÁGINAS FILAMENT MODIFICADAS
+--------------------------------------------------------------------------------
+
+Patrón en páginas CREATE (Ventas, Remisiones, Cotizaciones):
+  - Propiedades Livewire: public bool $pendingEmail = false, $pendingPrint = false
+  - getFormActions(): 3 botones — Guardar / Guardar e Imprimir / Guardar y Enviar correo
+  - afterCreate(): si $pendingEmail → Mail::to()->send(new DocumentoPdfMail())
+  - getRedirectUrl(): si $pendingPrint → redirect a ruta pdf.{tipo}
+
+Patrón en páginas EDIT (Ventas, Remisiones, Cotizaciones):
+  - Html2MediaAction::make('imprimir') → preview+print+savePdf, format=a4
+  - Action::make('enviarCorreo') → modal con TextInput email, envía DocumentoPdfMail
+
+--------------------------------------------------------------------------------
+5. CORRECCIONES EN CotizacionForm.php
+--------------------------------------------------------------------------------
+
+Campo numero:
+  ANTES: ->required()->unique(...)
+  AHORA: ->disabled()->dehydrated(false)->placeholder('Se genera automáticamente')
+  MOTIVO: El número se genera en el modelo al crear (booted::creating); no debe
+          ser requerido ni único en validación del form.
+
+Campo estado:
+  AÑADIDO: ->hiddenOn('create')
+  MOTIVO: Al crear siempre es 'pendiente'; no tiene sentido mostrarlo.
+
+Campo cliente_id:
+  AÑADIDO: ->where('id', '!=', 1)->orderBy('nombre')
+  MOTIVO: Excluir CLIENTES VARIOS (id=1) de cotizaciones.
+
+Repeater de detalles:
+  ELIMINADOS: campos lote, fecha_vencimiento
+  CAMBIADO: impuesto_id → ->hidden()->live() (se auto-llena desde el producto)
+  MOTIVO: Simplificar el formulario; IVA se calcula en totales, no por línea.
+
+--------------------------------------------------------------------------------
+6. ARCHIVOS MODIFICADOS EN ESTA SESIÓN
+--------------------------------------------------------------------------------
+
+| Archivo                                                       | Cambio                      |
+|---------------------------------------------------------------|-----------------------------|
+| resources/views/pdf/documento.blade.php                       | CREADO (template compartido)|
+| resources/views/emails/documento.blade.php                    | CREADO (email HTML)         |
+| app/Mail/DocumentoPdfMail.php                                 | CREADO (Mailable)           |
+| app/Http/Controllers/PdfController.php                        | CREADO (3 métodos)          |
+| routes/web.php                                                | +3 rutas PDF                |
+| app/Filament/Resources/Ventas/Pages/CreateVenta.php           | 3 botones + afterCreate     |
+| app/Filament/Resources/Ventas/Pages/EditVenta.php             | Html2MediaAction + correo   |
+| app/Filament/Resources/Remisions/Pages/CreateRemision.php     | 3 botones + afterCreate     |
+| app/Filament/Resources/Remisions/Pages/EditRemision.php       | Html2MediaAction + correo   |
+| app/Filament/Resources/Cotizacions/Pages/CreateCotizacion.php | 3 botones                   |
+| app/Filament/Resources/Cotizacions/Pages/EditCotizacion.php   | Html2MediaAction + correo   |
+| app/Filament/Resources/Cotizacions/Schemas/CotizacionForm.php | numero, estado, cliente, repeater |
+| scripts/100 productos con kardex.sql                          | Compatibilidad tabla actual |
+
+--------------------------------------------------------------------------------
+7. NOTAS TÉCNICAS
+--------------------------------------------------------------------------------
+
+- dompdf NO soporta JavaScript → autoPrint=false cuando se usa DocumentoPdfMail
+- html2media usa client-side (Chromium) → sí soporta CSS moderno en páginas Edit
+- Las rutas /pdf/* usan dompdf server-side y se abren en el navegador (stream)
+- Para crear cotizaciones a "CLIENTES VARIOS" ya no es posible desde el form
+- El template es compartido; color verde distingue remisiones, azul ventas/cotizaciones
+- CRÍTICO: El bloque @php DEBE estar al inicio del template (antes de <!DOCTYPE html>)
+  para que las variables $p, $titulo, etc. estén disponibles en el CSS inline.
+- Patrón correcto en dompdf: {{ $p['h'] }} dentro de <style> funciona porque
+  el @php Blade se evalúa antes de que dompdf procese el HTML.
+
+================================================================================
+FIN SESIÓN 08
+================================================================================
+
+
+================================================================================
+SESIÓN 09 — 2026-03-07 14:00 — NOTIFICACIONES (FASES 1-3), UX Y REVISIÓN GENERAL
+================================================================================
+
+OBJETIVO:
+  Implementar sistema de notificaciones en 3 fases, mejorar UX de formularios
+  y hacer revisión general de redirecciones en todos los módulos.
+
+--------------------------------------------------------------------------------
+1. SISTEMA DE NOTIFICACIONES — FASE 1: INFRAESTRUCTURA BASE
+--------------------------------------------------------------------------------
+
+COMPLETADO:
+  - Migración: database/migrations/2026_03_07_100000_create_notifications_table.php
+    (tabla estándar Laravel: uuid, type, notifiable morphs, data, read_at)
+  - AdminPanelProvider.php:
+    ->databaseNotifications()->databaseNotificationsPolling('60s')
+  - User.php ya tenía Notifiable — sin cambios necesarios
+  - Campana de notificaciones (icono) activa en barra superior de Filament
+  - Polling cada 60 segundos (balance rendimiento/reactividad)
+
+--------------------------------------------------------------------------------
+2. SISTEMA DE NOTIFICACIONES — FASE 2: ALERTAS DE INVENTARIO
+--------------------------------------------------------------------------------
+
+ARCHIVOS CREADOS:
+  app/Notifications/StockBajoNotification.php
+    Canal: database | Destinatarios: administrador, auxiliar
+    Datos: producto.nombre, stock_actual, stock_minimo, bodega, nivel (bajo|agotado)
+    Incluye URL para editar el producto directamente
+
+  app/Notifications/LoteProximoVencerNotification.php
+    Canal: database | Destinatarios: administrador, auxiliar
+    Datos: producto, lote, fecha_vencimiento, dias_restantes, cantidad, bodega
+    Ícono: rojo si <=7 días, naranja si <=30 días
+
+  app/Console/Commands/EnviarAlertasInventario.php
+    Firma: alertas:inventario {--stock} {--lotes} {--dias=30}
+    Lógica stock:
+      - StockBodega JOIN productos WHERE cantidad <= stock_minimo AND activo=true
+      - Notifica administrador + auxiliar
+      - Cache anti-spam: "alerta_stock_{prod_id}_{bodega_id}_{fecha}" (20h TTL)
+    Lógica lotes:
+      - StockBodegaLote WHERE fecha_vencimiento BETWEEN today AND today+N días
+      - Cache: "alerta_lote_{lote_id}_{fecha}" (20h TTL)
+
+  routes/console.php (MODIFICADO):
+    Schedule::command('alertas:inventario --stock')->dailyAt('07:00')
+    Schedule::command('alertas:inventario --lotes --dias=30')->weeklyOn(1, '07:00')
+
+--------------------------------------------------------------------------------
+3. SISTEMA DE NOTIFICACIONES — FASE 3: RECORDATORIOS DE FACTURAS
+--------------------------------------------------------------------------------
+
+ARCHIVOS CREADOS:
+  app/Notifications/FacturaPorVencerNotification.php
+    via(): ['database'] para User, ['mail'] para rutas anónimas (cliente)
+    toDatabase(): titulo, mensaje, venta_id, cliente, saldo_pendiente, dias_restantes, url
+    toMail(): usa template emails/factura_recordatorio.blade.php, asunto con días
+
+  app/Notifications/FacturaVencidaNotification.php
+    Mismo patrón, recibe $diasVencida (0=hoy, >0=días de mora)
+    Tono más urgente: header rojo en email, badge "mora X días"
+
+  resources/views/emails/factura_recordatorio.blade.php
+    Diseño consistente con emails/documento.blade.php (mismo wrapper, colores)
+    Header azul para "por vencer", rojo para "vencida"
+    Badge dinámico: "Vence en X días" / "Vence hoy" / "X días de mora"
+    Tabla resumen: número, fecha, vencimiento, total, saldo pendiente
+    Footer con datos de empresa (nombre, teléfono, email)
+
+  app/Console/Commands/EnviarRecordatoriosFacturas.php
+    Criterio: ventas confirmadas, saldo_pendiente > 0, fecha_vencimiento NOT NULL
+    Caso +3 días: FacturaPorVencer → admin/contador (DB) + cliente (mail)
+    Caso 0 días (hoy): FacturaVencida → admin/contador (DB) + cliente (mail)
+    Caso >7 días mora: FacturaVencida → solo admin/contador (DB, sin molestar al cliente a diario)
+    Cache anti-spam por caso: "recordatorio_por_vencer_{id}_{fecha}", etc. (20h TTL)
+    Si cliente no tiene email → skip silencioso (no falla)
+
+  routes/console.php (MODIFICADO):
+    Schedule::command('recordatorios:facturas')->dailyAt('08:00')
+
+--------------------------------------------------------------------------------
+4. CORRECCIÓN UX — EMPRESA: UN SOLO BOTÓN GUARDAR
+--------------------------------------------------------------------------------
+
+  CreateEmpresa.php:
+    - getFormActions(): solo $this->getCreateFormAction()->label('Guardar')
+    - Sin "Crear y crear otro", sin "Cancelar"
+    - getRedirectUrl(): va al index (lista de empresas)
+
+  EditEmpresa.php:
+    - getFormActions(): solo $this->getSaveFormAction()->label('Guardar')
+    - getRedirectUrl(): va al index
+
+  MOTIVO: El sistema tiene UNA sola empresa; el botón "Crear y crear otro"
+  no tiene sentido semántico en este contexto.
+
+--------------------------------------------------------------------------------
+5. REVISIÓN GENERAL — REDIRECCIÓN AL GUARDAR/CREAR
+--------------------------------------------------------------------------------
+
+HALLAZGO: 14 archivos (7 Create + 7 Edit) no tenían getRedirectUrl() definido.
+  Estos usaban el default de Filament 4.x, que en CreateRecord va al Edit
+  de la nueva entidad (no al listado).
+
+ARCHIVOS CORREGIDOS (getRedirectUrl → 'index'):
+  Create + Edit:
+    - Cajas
+    - FormulaTransformaciones
+    - Transformaciones
+    - MovimientoBancos
+    - MovimientoCajas
+    - MovimientoInventarios
+    - StockBodegas
+    - Empresa (corregido de 'edit' a 'index')
+
+MÓDULOS YA CORRECTOS (sin cambios):
+  Bancos, Bodegas, Categorias, Clientes, Compras, Cotizaciones, Devoluciones,
+  Impuestos, FormaPagos, Marcas, Numeraciones, PagoClientes, PagoProveedores,
+  Productos, Proveedores, Remisiones, Traslados, Usuarios, UnidadMedidas, Ventas.
+
+  EXCEPCIÓN: Ventas/Cotizaciones/Remisiones Create → si $pendingPrint, redirigen
+  al PDF antes de ir al índice (comportamiento correcto, se mantiene).
+
+--------------------------------------------------------------------------------
+6. ESTADO DEL PLAN DE NOTIFICACIONES
+--------------------------------------------------------------------------------
+
+  [✅] FASE 1 — Infraestructura base         4/4 tareas
+  [✅] FASE 2 — Alertas inventario           4/4 tareas
+  [✅] FASE 3 — Recordatorios facturas       5/5 tareas
+  [ ] FASE 4 — Alertas cotizaciones          0/4 tareas
+  [ ] FASE 5 — Resumen mensual al cliente    0/4 tareas
+  [ ] FASE 6 — Notificaciones en tiempo real 0/5 tareas
+  ─────────────────────────────────────────────────────
+  TOTAL                                     13/26 tareas
+
+--------------------------------------------------------------------------------
+7. ARCHIVOS MODIFICADOS EN ESTA SESIÓN
+--------------------------------------------------------------------------------
+
+| Archivo                                                        | Cambio                       |
+|----------------------------------------------------------------|------------------------------|
+| app/Notifications/StockBajoNotification.php                    | CREADO                       |
+| app/Notifications/LoteProximoVencerNotification.php            | CREADO                       |
+| app/Console/Commands/EnviarAlertasInventario.php               | CREADO                       |
+| app/Notifications/FacturaPorVencerNotification.php             | CREADO                       |
+| app/Notifications/FacturaVencidaNotification.php               | CREADO                       |
+| app/Console/Commands/EnviarRecordatoriosFacturas.php           | CREADO                       |
+| resources/views/emails/factura_recordatorio.blade.php          | CREADO                       |
+| routes/console.php                                             | +3 schedules (fases 2-3)     |
+| app/Providers/Filament/AdminPanelProvider.php                  | +databaseNotifications       |
+| app/Filament/Resources/Empresas/Pages/CreateEmpresa.php        | 1 botón + redirect index     |
+| app/Filament/Resources/Empresas/Pages/EditEmpresa.php          | 1 botón + redirect index     |
+| 14 archivos Create*/Edit* de módulos menores                   | +getRedirectUrl → index      |
+
+================================================================================
+FIN SESIÓN 09 — 2026-03-07 14:32
+================================================================================
+
+================================================================================
+SESIÓN 10 — 2026-03-07 — UX/PANEL + NOTIFICACIONES FASES 4-5 + INICIO FASE 6
+================================================================================
+
+OBJETIVO: Ejecutar pendientes marzo en orden: E0→F2→E0C→E0E→A1→A2→A3(parcial)
+
+--------------------------------------------------------------------------------
+1. E0 — TABS DE ESTADO EN TABLAS DE LISTADO
+--------------------------------------------------------------------------------
+
+Implementado getTabs() en los 4 módulos con documentos:
+
+  - ListVentas.php    → Todas | Borradores | Confirmadas | Pagadas | Anuladas
+  - ListCompras.php   → Todas | Borradores | Confirmadas | Pagadas | Anuladas
+  - ListCotizacions.php → Todas | Pendientes | Aceptadas | Rechazadas | Vencidas
+  - ListRemisions.php → Todas | Borradores | Confirmadas | Facturadas | Anuladas
+
+Patrón usado:
+  use Filament\Resources\Components\Tab;
+  public function getTabs(): array {
+      return ['todas' => Tab::make('Todas'), 'borrador' => Tab::make('...')
+          ->modifyQueryUsing(fn(Builder $q) => $q->where('estado', VentaEstado::BORRADOR))
+          ->badge(Venta::where('estado', VentaEstado::BORRADOR)->count()), ...];
+  }
+
+NOTA: Cotizacion usa strings planos (sin Enum). VentaEstado/CompraEstado/RemisionEstado
+      son BackedEnum en app/Enums/.
+
+--------------------------------------------------------------------------------
+2. F2 — BREADCRUMBS DESACTIVADOS
+--------------------------------------------------------------------------------
+
+  AdminPanelProvider.php → agregado ->breadcrumbs(false) antes de ->databaseNotifications()
+  Una sola línea, sin efectos secundarios.
+
+--------------------------------------------------------------------------------
+3. E0C — FOOTER DEL PANEL
+--------------------------------------------------------------------------------
+
+  CREADO: resources/views/filament/footer.blade.php
+    → Muestra: nombre empresa | v1.0 | año actual
+
+  AdminPanelProvider.php → renderHook(PanelsRenderHook::FOOTER, fn() => view('filament.footer'))
+  Import correcto: use Filament\View\PanelsRenderHook;
+
+--------------------------------------------------------------------------------
+4. E0E — ÍTEMS DE MENÚ DE USUARIO
+--------------------------------------------------------------------------------
+
+  AdminPanelProvider.php → ->userMenuItems([...])
+    - "Configuración de empresa" → EmpresaResource::getUrl('index')
+    - "Numeraciones DIAN"        → NumeracionResource::getUrl('index')
+
+  Imports agregados: MenuItem, EmpresaResource, NumeracionResource
+
+--------------------------------------------------------------------------------
+5. A1 — FASE 4: ALERTAS DE COTIZACIONES (4/4 tareas)
+--------------------------------------------------------------------------------
+
+  CREADOS:
+    - app/Notifications/CotizacionSeguimientoNotification.php
+      Canal: database | Destinatario: vendedor+admin | Trigger: pendiente >5 días
+
+    - app/Notifications/CotizacionPorVencerNotification.php
+      Canal: database | Destinatario: vendedor+admin
+      Cubre: por_vencer (<=2 días) + vencida (fecha_vigencia < hoy)
+      Parámetro $tipo: 'por_vencer' | 'vencida'
+
+    - app/Console/Commands/EnviarAlertasCotizaciones.php
+      Signature: alertas:cotizaciones
+      Lógica: seguimiento >5 días + por vencer <=2 días + vencida → cambia estado a 'vencida'
+      Anti-spam: Cache::put(..., now()->addHours(20)) por cotizacion/día
+
+  MODIFICADO:
+    - routes/console.php → +Schedule::command('alertas:cotizaciones')->dailyAt('08:00')
+
+--------------------------------------------------------------------------------
+6. A2 — FASE 5: RESUMEN MENSUAL AL CLIENTE (4/4 tareas)
+--------------------------------------------------------------------------------
+
+  CREADOS:
+    - app/Notifications/ResumenMensualClienteNotification.php
+      Canal: mail | Constructor: cliente, mes, ventas, pagos, devoluciones, saldoPendiente
+
+    - resources/views/emails/resumen_mensual.blade.php
+      Misma estética que factura_recordatorio.blade.php
+      Secciones: Facturas del mes | Pagos recibidos | Devoluciones | Saldo final (rojo/verde)
+
+    - app/Console/Commands/EnviarResumenMensual.php
+      Signature: resumen:mensual
+      Criterio envío: clientes.email IS NOT NULL AND (ventas_mes >= 1 OR saldo > 0)
+      Excluye: clientes.id=1 (CLIENTES VARIOS)
+
+  MODIFICADO:
+    - routes/console.php → +Schedule::command('resumen:mensual')->monthlyOn(1, '07:00')
+
+--------------------------------------------------------------------------------
+7. A3 — FASE 6: NOTIFICACIONES EN TIEMPO REAL (en progreso — 2/5 notifs creadas)
+--------------------------------------------------------------------------------
+
+  CREADOS hasta la pausa:
+    - app/Notifications/PagoRecibidoNotification.php
+      Canal: mail | Destinatario: cliente vía email directo
+      Constructor: PagoCliente $pago
+
+    - app/Notifications/DevolucionConfirmadaNotification.php
+      Canal: database (admin) + mail (cliente)
+      via(): User → database | otro → mail
+
+  PENDIENTES aún en A3:
+    [ ] VentaService::confirmar() → notificarStockBajo tras descontar
+    [ ] PagoClienteObserver::created() → enviar PagoRecibidoNotification
+    [ ] Devolucion::procesarDevolucion() → enviar DevolucionConfirmadaNotification
+
+--------------------------------------------------------------------------------
+8. ESTADO DE NOTIFICACIONES ACTUALIZADO
+--------------------------------------------------------------------------------
+
+  [✅] FASE 1 — Infraestructura base          4/4  tareas
+  [✅] FASE 2 — Alertas inventario            4/4  tareas
+  [✅] FASE 3 — Recordatorios facturas        5/5  tareas
+  [✅] FASE 4 — Alertas cotizaciones          4/4  tareas
+  [✅] FASE 5 — Resumen mensual              4/4  tareas
+  [~]  FASE 6 — Notificaciones tiempo real   2/5  tareas (notifs creadas, triggers pendientes)
+  ─────────────────────────────────────────────────────────
+  TOTAL                                      23/26 tareas
+
+--------------------------------------------------------------------------------
+9. ARCHIVOS CREADOS/MODIFICADOS EN ESTA SESIÓN
+--------------------------------------------------------------------------------
+
+| Archivo                                                          | Cambio                        |
+|------------------------------------------------------------------|-------------------------------|
+| app/Filament/Resources/Ventas/Pages/ListVentas.php               | +getTabs()                    |
+| app/Filament/Resources/Compras/Pages/ListCompras.php             | +getTabs()                    |
+| app/Filament/Resources/Cotizacions/Pages/ListCotizacions.php     | +getTabs()                    |
+| app/Filament/Resources/Remisions/Pages/ListRemisions.php         | +getTabs()                    |
+| app/Providers/Filament/AdminPanelProvider.php                    | breadcrumbs+footer+userMenu   |
+| resources/views/filament/footer.blade.php                        | CREADO                        |
+| app/Notifications/CotizacionSeguimientoNotification.php          | CREADO                        |
+| app/Notifications/CotizacionPorVencerNotification.php            | CREADO                        |
+| app/Console/Commands/EnviarAlertasCotizaciones.php               | CREADO                        |
+| app/Notifications/ResumenMensualClienteNotification.php          | CREADO                        |
+| resources/views/emails/resumen_mensual.blade.php                 | CREADO                        |
+| app/Console/Commands/EnviarResumenMensual.php                    | CREADO                        |
+| app/Notifications/PagoRecibidoNotification.php                   | CREADO                        |
+| app/Notifications/DevolucionConfirmadaNotification.php           | CREADO                        |
+| routes/console.php                                               | +2 schedules (fases 4-5)      |
+
+================================================================================
+FIN SESIÓN 10 — EN PROGRESO (pausa en A3)
+================================================================================
+
+
+================================================================================
+SESIÓN 11 — 2026-03-08
+Reportes/Kardex, protecciones de borrado, accesos de usuario
+================================================================================
+
+--------------------------------------------------------------------------------
+1. CORRECCIONES REPORTES Y KARDEX (bugs Filament 4.x)
+--------------------------------------------------------------------------------
+
+Problemas detectados y corregidos en KardexProducto, ReporteCartera, ReporteRentabilidad:
+
+a) `protected static string $view` → `protected string $view` (no puede ser static en Filament 4)
+b) `use Filament\Forms\Form` → `use Filament\Schemas\Schema` (Form no existe en Filament 4)
+c) Método `filtersForm(Form $form)` → `filtersForm(Schema $schema): Schema`
+d) `->statePath('data')` eliminado — causaba que los filtros nunca se aplicaran
+   (los valores quedaban en $this->data[] pero las queries usaban $this->filtro_xxx)
+e) `protected function getForms(): array { return ['filtersForm']; }` agregado
+   (sin esto, Filament no cachea el form y el `{{ $this->filtersForm }}` falla)
+f) Tipos de propiedades estáticas corregidos:
+   - `$navigationIcon`: `BackedEnum|string|null`
+   - `$navigationGroup`: `UnitEnum|string|null`
+
+g) Vistas Blade reescritas con componentes Filament nativos:
+   - `<x-filament::section>` en lugar de divs manuales con clases Tailwind
+   - `<x-filament::button tag="a">` en lugar de `<a>` manuales
+   - Grids con `style="display:grid; grid-template-columns:repeat(N,1fr)"`
+   (las clases Tailwind custom no se compilan en el CSS de Filament sin viteTheme)
+
+--------------------------------------------------------------------------------
+2. MEJORAS EN LISTA DE PRODUCTOS
+--------------------------------------------------------------------------------
+
+- Imagen por defecto: `defaultImageUrl(url('/images/producto.png'))`
+- DeleteAction con protección:
+  - Verifica: MovimientoInventario + DetalleVenta + DetalleCompra
+  - Si tiene movimientos: halt() con notificación danger
+  - Solo visible para rol 'administrador'
+
+--------------------------------------------------------------------------------
+3. AVATAR POR DEFECTO EN USUARIOS
+--------------------------------------------------------------------------------
+
+- `defaultImageUrl(url('/images/avatar-default.svg'))` en ImageColumn de UserResource
+- Archivo: public/images/avatar-default.svg (heroicon user-circle copiado de vendor)
+
+--------------------------------------------------------------------------------
+4. PROTECCIONES DE BORRADO / DESACTIVACIÓN (H3 completo)
+--------------------------------------------------------------------------------
+
+Implementado en 6 módulos con condición global: solo rol 'administrador'.
+
+| Módulo        | Acción      | Protección principal                                  |
+|---------------|-------------|-------------------------------------------------------|
+| Bodegas       | Delete      | es_principal bloqueado + sin stock/movimientos/traslados |
+| Usuarios      | Desactivar  | id=1 protegido, solo si activo=true, revoca acceso    |
+| Clientes      | Desactivar  | id=1 protegido (CLIENTES VARIOS)                      |
+| Proveedores   | Delete      | id=1 protegido + sin compras/pagos                    |
+| Productos     | Delete      | Sin movimientos/ventas/compras (ya existía + rol)     |
+| Fórmulas      | Delete      | Sin transformaciones asociadas                        |
+
+Nota: Clientes y Usuarios usan "Desactivar" (activo=false) en lugar de borrar
+para preservar historial de auditoría.
+
+--------------------------------------------------------------------------------
+5. REORGANIZACIÓN DEL TASKLIST
+--------------------------------------------------------------------------------
+
+- D1, D2 (Portal Clientes) → diferidos como G5. Se explicó qué son.
+- F4 (URLs firmadas), F5 (Backup) → diferidos como G6, G7.
+- H3 → marcado como ✅ completado (6/6 sub-tareas).
+- Total pendientes activos: ~15 tareas (desde 53).
+
+--------------------------------------------------------------------------------
+6. DISCUSIÓN: Auto-registro de usuarios (H1)
+--------------------------------------------------------------------------------
+
+Diseño acordado para H1 (pendiente de implementar):
+  - Login → link "Solicitar acceso"
+  - Usuario llena: nombre, email, contraseña, cargo/motivo
+  - Cuenta con activo=false → email a todos los administradores
+  - Admin aprueba en UserResource (tab "Pendientes") + asigna rol
+  - Email al usuario: "Tu acceso fue aprobado"
+  - Bloqueado en login mientras activo=false (mensaje claro)
+
+--------------------------------------------------------------------------------
+7. ARCHIVOS MODIFICADOS EN SESIÓN 11
+--------------------------------------------------------------------------------
+
+| Archivo                                                              | Cambio                        |
+|----------------------------------------------------------------------|-------------------------------|
+| app/Filament/Resources/Productos/Pages/KardexProducto.php            | Fixes Filament 4.x completos  |
+| app/Filament/Pages/ReporteCartera.php                                | Fixes Filament 4.x completos  |
+| app/Filament/Pages/ReporteRentabilidad.php                           | Fixes Filament 4.x completos  |
+| resources/views/filament/pages/reporte-cartera.blade.php             | Reescrita con componentes     |
+| resources/views/filament/pages/reporte-rentabilidad.blade.php        | Reescrita con componentes     |
+| resources/views/filament/resources/productos/pages/kardex-producto.blade.php | Reescrita           |
+| app/Filament/Resources/Productos/Tables/ProductosTable.php           | +Delete protegido +imagen     |
+| app/Filament/Resources/UserResource.php                              | Delete→Desactivar + avatar    |
+| app/Filament/Resources/ClienteResource.php                           | +Desactivar action            |
+| app/Filament/Resources/ProveedorResource.php                         | +Delete protegido             |
+| app/Filament/Resources/Bodegas/Tables/BodegasTable.php               | +Delete protegido             |
+| app/Filament/Resources/FormulaTransformacions/Tables/FormulaTransformacionTable.php | +Delete protegido |
+| public/images/avatar-default.svg                                     | CREADO                        |
+| contexto/Tasklist.txt                                                | Reorganización completa       |
+| contexto/Bitacora.txt                                                | Esta entrada                  |
+
+================================================================================
+FIN SESIÓN 11
+================================================================================
+
+================================================================================
+SESIÓN 12 — 2026-03-08
+================================================================================
+
+1. TAREA PRINCIPAL
+   H1 — Auto-registro desde login con aprobación de admin (4 sub-tareas)
+
+2. IMPLEMENTACIÓN COMPLETA
+
+   H1.1 — Custom Register page
+   - app/Filament/Pages/Auth/Register.php
+   - Extiende Filament\Auth\Pages\Register
+   - form(): agrega campo 'cargo' (Cargo / Motivo de acceso) entre email y contraseña
+   - mutateFormDataBeforeRegister(): inyecta activo=false
+   - register() override completo: NO llama Filament::auth()->login($user)
+     → Crea usuario → Notifica admins → flash session → redirect a login
+
+   H1.2 — Notificación a administradores
+   - app/Notifications/SolicitudAccesoNotification.php
+     Canal: 'database', payload: tipo/titulo/mensaje/user_id/user_email/cargo/url
+   - Enviada a User::role('administrador')->get() tras registro exitoso
+
+   H1.3 — Aprobación en UserResource
+   - ListUsers.php: getTabs() con tabs Todos / Pendientes (badge rojo con count) / Activos
+   - UserResource: Action 'aprobar' con modal Select de rol
+     → activo=true, syncRoles([rol]), notify(AccesoAprobadoNotification)
+   - app/Notifications/AccesoAprobadoNotification.php
+     Canal: 'database', payload: tipo/titulo/mensaje/url
+
+   H1.4 — Login con mensajes diferenciados
+   - app/Filament/Pages/Auth/Login.php
+   - mount(): si session('registro_pendiente') → Filament notification persistente
+   - authenticate(): antes de parent, verifica si user.activo=false + password válido
+     → "pendiente de aprobación" (sin roles) o "cuenta desactivada" (con roles)
+
+   AdminPanelProvider actualizado:
+   - ->login(Login::class) → custom Login
+   - ->registration(Register::class) → habilita registro + custom page
+
+3. ARCHIVOS CREADOS/MODIFICADOS
+   app/Filament/Pages/Auth/Register.php             CREADO
+   app/Filament/Pages/Auth/Login.php                CREADO
+   app/Notifications/SolicitudAccesoNotification.php  CREADO
+   app/Notifications/AccesoAprobadoNotification.php   CREADO
+   app/Providers/Filament/AdminPanelProvider.php    login+registration configurados
+   app/Filament/Resources/UserResource.php          +Action 'aprobar'
+   app/Filament/Resources/UserResource/Pages/ListUsers.php  +getTabs()
+   contexto/Tasklist.txt                            H1 marcado ✅, resumen actualizado
+   contexto/Bitacora.txt                            Esta entrada
+
+4. ESTADO BLOQUE H: COMPLETO (H1 ✅ H2 ✅ H3 ✅)
+
+================================================================================
+FIN SESIÓN 12
+================================================================================
+
+

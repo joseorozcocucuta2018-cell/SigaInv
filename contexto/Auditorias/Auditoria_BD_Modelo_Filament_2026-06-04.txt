@@ -1,0 +1,236 @@
+================================================================================
+  AUDITORIA BD vs MIGRACIONES vs MODELOS vs FILAMENT
+  Stack: Laravel 13 + Filament v5 + PHP 8.4 + MySQL
+  Fecha: 2026-06-04 | v3.16.8
+  Sesion: 57 (Bitacora005)
+================================================================================
+
+OBJETIVO
+--------
+Comparar el estado real de la base de datos MySQL contra:
+  (a) los archivos en database/migrations/ (fuente de verdad del schema)
+  (b) los modelos en app/Models/ (fillable, casts)
+  (c) los recursos en app/Filament/Resources/ (Forms, Tables)
+para identificar discrepancias que rompan type-safety, generen magic strings,
+o queden como deuda tecnica silenciosa.
+
+ALCANCE
+-------
+  - 59 tablas en BD
+  - 49 archivos de migracion (excluyendo 0001_01_* core)
+  - 55 modelos en app/Models
+  - 36 carpetas + 2 archivos sueltos en app/Filament/Resources
+  - 40 enums en app/Enums
+
+HALLAZGOS
+---------
+
+  [C] Critico — Type-safety rota / dato incorrecto
+  [A] Alto    — Magic strings / inconsistencia
+  [M] Medio   — Deuda tecnica
+  [B] Bajo    — Cosmetic / dead code
+
+
+================================================================================
+  [C] SECCION 1 — COLUMNAS ENUM EN BD SIN CAST EN MODELO
+================================================================================
+
+Las siguientes columnas son `ENUM(...)` en MySQL pero el modelo Eloquent
+las trata como string crudo. Impacto: comparaciones `===` con el enum
+falla, `->label()`/`->color()` no funcionan, type-safety rota.
+
+  Cliente.portal_acceso
+    BD      : enum('sin_acceso','pendiente','activo') NOT NULL DEFAULT 'sin_acceso'
+    Modelo  : app/Models/Cliente.php:51
+              cast: 'portal_acceso' => 'string'
+              // comentario: "enum: sin_acceso, pendiente, activo"
+    Solucion: Crear app/Enums/PortalAccesoEnum + cast ::class
+
+  Empresa.tipo_persona
+    BD      : enum('natural','juridica') NOT NULL DEFAULT 'juridica'
+    Modelo  : app/Models/Empresa.php (sin cast en $casts)
+    Solucion: Crear app/Enums/EmpresaTipoPersona + cast ::class
+
+  Empresa.regimen_tributario
+    BD      : enum('simplificado','comun','gran_contribuyente')
+              NOT NULL DEFAULT 'comun'
+    Modelo  : app/Models/Empresa.php (sin cast en $casts)
+    Solucion: Crear app/Enums/EmpresaRegimenTributario + cast ::class
+
+  Auditoria.operacion
+    BD      : enum('INSERT','UPDATE','DELETE') NOT NULL
+    Modelo  : app/Models/Auditoria.php (sin cast en $casts)
+    Solucion: Crear app/Enums/AuditoriaOperacion + cast ::class
+    Nota    : No tiene Filament Resource (AuditoriaDocumento es el unico
+              que aparece en UI). El enum aplica solo a uso programatico.
+
+
+================================================================================
+  [C] SECCION 2 — COLUMNA BOOLEANA SIN CAST
+================================================================================
+
+  AjusteInventario.es_saldo_inicial
+    BD      : tinyint(1) NOT NULL DEFAULT 0
+    Modelo  : app/Models/AjusteInventario.php (sin cast)
+    Comp.   : ConteoFisico SI lo castea a 'boolean'
+              (app/Models/ConteoFisico.php:37)
+    Solucion: Anadir 'es_saldo_inicial' => 'boolean' al array $casts.
+
+
+================================================================================
+  [A] SECCION 3 — OPCIONES HARDCODEADAS EN FILAMENT FORMS
+================================================================================
+
+Tres Select con arrays literales que deberian delegar al enum.
+Sesion 57 migro ~25 de estos en otros recursos; quedaron 3 huerfanos.
+
+  app/Filament/Resources/ClienteResource.php:191-198
+    Campo   : portal_acceso
+    Actual  : ->options(['sin_acceso' => 'Sin Acceso',
+                         'pendiente'  => 'Pendiente',
+                         'activo'     => 'Activo'])
+              ->default('sin_acceso')
+    Objetivo: ->options(PortalAccesoEnum::class)
+              ->default(PortalAccesoEnum::SIN_ACCESO)
+
+  app/Filament/Resources/Empresas/Schemas/EmpresaForm.php:54-61
+    Campo   : tipo_persona
+    Actual  : ->options(['natural' => 'Natural', 'juridica' => 'Juridica'])
+              ->default('juridica')
+    Objetivo: ->options(EmpresaTipoPersona::class)
+              ->default(EmpresaTipoPersona::JURIDICA)
+
+  app/Filament/Resources/Empresas/Schemas/EmpresaForm.php:112-122
+    Campo   : regimen_tributario
+    Actual  : ->options(['simplificado'       => 'Simplificado',
+                         'comun'              => 'Comun',
+                         'gran_contribuyente' => 'Gran Contribuyente'])
+              ->default('comun')
+              ->live()->afterStateUpdated(...)
+    Objetivo: ->options(EmpresaRegimenTributario::class)
+              ->default(EmpresaRegimenTributario::COMUN)
+
+  NOTA: tipo_documento en ClienteResource.php:74 y ProveedorResource.php:73
+        YA usa DocumentoTipoEnum::class (correcto, S57).
+
+
+================================================================================
+  [M] SECCION 4 — ASIMETRIA Devolucion vs DevolucionCompra (motivo)
+================================================================================
+
+  Devolucion.motivo
+    BD     : enum('cambio','defecto','error_pedido','otro')
+    Modelo : app/Models/Devolucion.php:47
+             cast: 'motivo' => DevolucionMotivo::class  [OK]
+
+  DevolucionCompra.motivo
+    BD     : varchar(50) NULL
+    Modelo : app/Models/DevolucionCompra.php (sin cast)
+    Decision requerida:
+      A) Crear enum DevolucionCompraMotivo + migrar columna a enum
+      B) Documentar: DevolucionCompra es nota libre, Devolucion es
+         catalogo cerrado.
+
+================================================================================
+  [M] SECCION 5 — ENUMS SIN USO (DEAD CODE)
+================================================================================
+
+  BancoCategoria
+    Tabla bancos NO tiene columna 'categoria'.
+    No se encontro uso en ningun Resource/Form/Table.
+
+  CajaCategoria
+    Tabla cajas NO tiene columna 'categoria'.
+    movimientos_cajas.categoria existe como varchar(50) sin cast
+    (podria usarlo ahi, pero actualmente sin uso).
+
+  Decision: eliminar o reutilizar. Si se decide reutilizar, migrar
+  movimientos_cajas.categoria a enum.
+
+
+================================================================================
+  [C] SECCION 6 — INCONSISTENCIA DE TIPO turnos.bodega_id
+================================================================================
+
+  Migracion (database/migrations/2026_06_02_173842_create_turnos_table.php:17)
+    $table->integer('bodega_id')->nullable()->default(1);
+    (int, sin FK)
+
+  BD actual
+    int(11) DEFAULT 1, sin FK hacia bodegas
+
+  Convencion del proyecto (resto de tablas)
+    $table->foreignId('bodega_id')->constrained('bodegas');
+    (bigint unsigned, con FK)
+
+  Migracion pendiente (REFERENCIADA en Contexto.txt pero NO EXISTE)
+    2026_06_03_060855_fix_turnos_bodega_id_type.php
+
+  Accion
+    Crear el archivo de migracion. El usuario la ejecutara manualmente
+    (regla 8: no auto-migrate).
+
+================================================================================
+  [B] SECCION 7 — ANOMALIA DE CARPETAS FILAMENT
+================================================================================
+
+  app/Filament/Resources/Cliente/   → 3 sub-Resources del PORTAL:
+                                      - CotizacionPortals/
+                                      - FacturaPortals/
+                                      - RemisionPortals/
+  app/Filament/Resources/Proveedor/ → (presumiblemente igual patron)
+
+  El Resource PRINCIPAL esta en:
+  app/Filament/Resources/ClienteResource.php    (archivo suelto)
+  app/Filament/Resources/ProveedorResource.php  (archivo suelto)
+
+  Renombrar para claridad:
+    Cliente/     → PortalClientes/
+    Proveedor/   → PortalProveedores/
+
+================================================================================
+  [B] SECCION 8 — OBSERVACIONES MENORES
+================================================================================
+
+  - AuditoriaResource apunta a AuditoriaDocumento::class (no Auditoria).
+    Valido: el modelo Auditoria es solo para logs programaticos.
+  - No hay migraciones huerfanas ni tablas sin migracion.
+  - No hay modelos sin tabla ni tablas sin modelo.
+  - EmpresaInfolist.php (l.27, 56) debe actualizar sus TextEntry
+    'tipo_persona' y 'regimen_tributario' con
+    ->formatStateUsing(fn ($state) => $state?->label()) una vez los
+    casts esten activos.
+
+
+================================================================================
+RESUMEN EJECUTIVO
+================================================================================
+
+  BIEN (validado contra BD, migraciones, modelos, Filament):
+    - 30+ modelos con casts correctos a enums BackedEnum
+    - 18 Resources Filament migrados a enums (sesion 57)
+    - 40 enums PHP con label()/color()/icon()
+    - 333 tests pasando con asserts sobre enums
+    - Todas las migraciones existen y coinciden con tablas
+
+  FALTA (orden de prioridad):
+    1. Crear 4 enums + casts (PortalAcceso, EmpresaTipoPersona,
+       EmpresaRegimenTributario, AuditoriaOperacion)
+    2. Reemplazar 3 opciones hardcodeadas en Filament
+    3. Cast 'es_saldo_inicial' => 'boolean' en AjusteInventario
+    4. Decidir asimetria DevolucionCompra.motivo (enum vs varchar)
+    5. Resolver enums huerfanos (BancoCategoria, CajaCategoria)
+    6. Crear migracion turnos.bodega_id pendiente
+    7. (Cosmetic) Renombrar carpetas Portal
+
+  PLAN DE EJECUCION
+    Ver contexto/Tasklists/Tasklist.txt → Tarea 6
+    (11 sub-items con archivos y lineas exactas)
+
+================================================================================
+CONTROL DE CAMBIOS
+================================================================================
+  2026-06-04  Creacion del informe (v3.16.8, sesion 57)
+================================================================================
+FIN AUDITORIA
+================================================================================

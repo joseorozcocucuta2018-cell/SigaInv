@@ -1,0 +1,355 @@
+================================================================================
+  CHECKLIST DE AUDITORIA — STACK NODE.JS / JAVASCRIPT
+  Stack: Node.js + Puppeteer + Laravel Process::run
+  Patron: Scripts autónomos llamados desde PHP (Process::run / Symfony Process)
+  Depende de: Auditoria.txt (codigo PHP) — ejecutar DESPUES de Auditoria.txt
+  Ultima actualizacion: 2026-04-30
+================================================================================
+
+OBJETIVO
+--------
+Detectar vulnerabilidades y problemas operativos en scripts Node.js
+ejecutados desde Laravel via Process::run / Symfony Process.
+Cubre: command injection, payload malformado, manejo de errores,
+timeouts, expiracion de sesion, datos sensibles en logs.
+
+NO cubre logica de negocio — eso va en tests (Pest / Vitest).
+
+PRIORIDADES
+-----------
+  [C] Critico — RCE, exfiltracion de datos, bloqueo permanente.     BLOQUEA deploy.
+  [A] Alto    — Datos incorrectos, fallo silencioso, fuga parcial.   BLOQUEA deploy.
+  [M] Medio   — Degradacion, ruido en logs, operacion manual extra.  Registrar, no bloquea.
+
+ESTADOS
+-------
+  [ ] Pendiente   [OK] Aprobado   [FAIL] Fallo   [N/A] No aplica
+
+CUANDO EJECUTAR
+---------------
+  - Cuando el proyecto incluya una carpeta /scripts con archivos .js / .mjs
+  - Cuando existan llamadas a Process::run, Symfony Process o shell_exec
+    con payload generado desde PHP
+  - Antes de cualquier deploy que modifique scripts JS o el Service que los llama
+
+Si el proyecto NO tiene Node.js / JS: marcar todo como [N/A] y pasar de largo.
+
+
+PASO 0 — IDENTIFICAR SCRIPTS Y LLAMADAS
+================================================================================
+
+  Buscar en el proyecto:
+    1. Archivos .js / .mjs en /scripts, /resources/js, o rutas similares
+    2. Llamadas a Process::run, shell_exec, exec(), Symfony Process
+       en app/Services/, app/Http/Controllers/, commands/
+
+  [ ] Lista de scripts JS identificados:  ___________________________________ 0
+  [ ] Lista de llamadas Process::run identificadas:  _________________________ 0
+  [ ] Identificar que datos del usuario/DB fluyen hacia los scripts JS
+
+
+REGLAS
+================================================================================
+
+--------------------------------------------------------------------------------
+REGLA 1 — COMMAND INJECTION EN Process::run  [C]        BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Process::run recibe un array de argumentos — es seguro contra injection
+porque Laravel/PHP escapa cada argumento individualmente.
+
+Riesgo real: cuando se arma el payload JSON con datos que vienen de la DB
+y ese JSON contiene caracteres de control o se serializa mal.
+
+  MAL:
+      $payload = [
+          'msg' => $request->input('mensaje'),    // usuario externo
+      ];
+      Process::run(['node', 'script.js', json_encode($payload)]);
+
+  BIEN:
+      $payload = [
+          'msg' => substr($mensaje, 0, 2000),     // limpiar y truncar
+      ];
+      $json = json_encode($payload);
+      if ($json === false) {
+          throw new \RuntimeException('Payload no serializable');
+      }
+      Process::run(['node', 'script.js', $json]);
+
+  Verificar tambien:
+  - json_encode() puede fallar con utf8 malformado → validar antes
+  - Strings con null bytes pueden truncar el payload en Node
+
+  [ ] json_encode() validado contra false antes de pasar a Process::run
+  [ ] Datos de usuario truncados o sanitizados antes de armar payload
+  [ ] Sin interpolacion directa en argumentos de Process::run
+
+
+--------------------------------------------------------------------------------
+REGLA 2 — TIMEOUT EN PROCESOS NODE  [A]                BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Por defecto Process::run espera indefinidamente (60 seg en Laravel 12).
+Si Node.js se cuelga (puppeteer sin --headless, pagina que no carga,
+bucle infinito), el proceso PHP se bloquea.
+
+  MAL:
+      Process::run(['node', 'script.js', $json]);   // timeout por defecto (60s)
+
+  BIEN:
+      $result = Process::timeout(30)->run(['node', 'script.js', $json]);
+
+  BIEN:
+      $result = Process::run(['node', 'script.js', $json], timeout: 30);
+
+  [ ] Toda llamada a Process::run tiene timeout explicito (30s o menos)
+  [ ] El timeout es menor que el intervalo de la tarea programada (si aplica)
+      para evitar solapamiento de procesos
+
+
+--------------------------------------------------------------------------------
+REGLA 3 — MANEJO DE ERRORES EN NODE -> PHP  [A]         BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+El script Node devuelve JSON por stdout. Si el script crashea, el output
+puede ser un stack trace, no JSON valido. json_decode() falla silenciosamente.
+
+  MAL:  (PHP)
+      $output = json_decode($result->output(), true);
+      // si no es JSON, $output = null
+      if ($output['status'] === 'success')  // Warning: null como array
+
+  BIEN: (PHP)
+      $output = json_decode($result->output(), true);
+      if (json_last_error() !== JSON_ERROR_NONE || !is_array($output)) {
+          Log::error('Node: output no es JSON valido', [
+              'raw' => $result->output(),
+              'error' => $result->errorOutput(),
+          ]);
+          return false;
+      }
+
+  BIEN: (Node — siempre devolver JSON valido incluso en catch)
+      try {
+          // ... logica
+          console.log(JSON.stringify({ status: 'success', url: postUrl }));
+      } catch (err) {
+          console.log(JSON.stringify({
+              status: 'error',
+              message: err.message
+          }));
+      }
+
+  [ ] PHP valida que json_decode() sea array/object antes de acceder a keys
+  [ ] Node.js siempre hace console.log(JSON.stringify(...)) en catch()
+  [ ] Sin suposicion de que el output de Node siempre es JSON valido
+
+
+--------------------------------------------------------------------------------
+REGLA 4 — DATOS SENSIBLES EN LOGS  [A]                  BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Cookies de Facebook, tokens de sesion y payloads completos pueden
+terminar en logs de Laravel si se registran sin filtrar.
+
+  MAL:
+      Log::info('Payload enviado a Node', $payload);
+      // $payload['cookies'] tiene sesion de Facebook
+
+  BIEN:
+      Log::info('Payload enviado a Node', [
+          'grupo' => $payload['grupoId'] ?? 'N/A',
+          'accion' => $payload['accion'] ?? 'publicar',
+      ]);
+      // No incluir 'cookies' ni 'msg'
+
+  BIEN:
+      Log::info('Ejecutando publicacion', [
+          'group_id' => $grupo->fb_id_grupo,
+          'campana' => $campana->nombre,
+      ]);
+
+  [ ] Payloads completos no se registran en Log::info / Log::error
+  [ ] Cookies de sesion no aparecen en logs ni en output visible al usuario
+  [ ] Error output de Node ($result->errorOutput()) se revisa antes de loggear
+
+
+--------------------------------------------------------------------------------
+REGLA 5 — EXPIRACION DE SESION DETECTABLE  [A]          BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Las cookies de Facebook expiran. Si el script Node.js no puede publicar
+por sesion expirada, debe reportarlo explicitamente para que PHP pueda
+marcar la cuenta como inactiva.
+
+  MAL: (Node — no distingue entre error de red y sesion expirada)
+      } catch (err) {
+          console.log(JSON.stringify({ status: 'error', message: err.message }));
+      }
+
+  BIEN: (Node — detecta expiracion)
+      } catch (err) {
+          const isSessionExpired = err.message?.includes('login') ||
+              err.message?.includes('auth') ||
+              err.message?.includes('cookie');
+          console.log(JSON.stringify({
+              status: 'error',
+              message: err.message,
+              session_expired: isSessionExpired
+          }));
+      }
+
+  BIEN: (PHP — maneja expiracion)
+      if (!empty($output['session_expired'])) {
+          $cuenta->update(['esta_activa' => false]);
+          // Notificar al usuario que debe recargar cookies
+      }
+
+  [ ] Node.js reporta explicitamente si la sesion expiro (session_expired: true)
+  [ ] PHP desactiva la cuenta si recibe session_expired
+  [ ] Usuario recibe notificacion visible de que debe actualizar cookies
+
+
+--------------------------------------------------------------------------------
+REGLA 6 — INTEGRIDAD DE SCRIPTS NODE  [M]               Registrar
+--------------------------------------------------------------------------------
+Si un atacante tiene acceso al servidor y modifica los .js en /scripts/,
+puede ejecutar codigo arbitrario via Process::run.
+
+  Verificar:
+  - Los scripts .js estan en una carpeta fuera de public/ (ej: /scripts en raiz)
+  - No se pueden subir scripts nuevos via FileUpload que se ejecuten despues
+  - Los permisos del directorio /scripts/ son restrictivos (755, no 777)
+
+  [ ] Carpeta /scripts/ fuera de /public/
+  [ ] Sin FileUpload que permita subir .js que se ejecuten via Process::run
+  [ ] Permisos de /scripts/ restrictivos (755 o 750, no 777)
+
+
+--------------------------------------------------------------------------------
+REGLA 7 — VALIDACION DE ARGUMENTOS DENTRO DE NODE  [C]  BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Node.js recibe un JSON y lo parsea. Si falta un campo obligatorio
+(grupoId, cookies), el script debe fallar temprano, no con TypeError
+mitad de ejecucion.
+
+  MAL: (Node — asume que todo llega)
+      const payload = JSON.parse(process.argv[2]);
+      await page.goto(`https://facebook.com/groups/${payload.grupoId}`);
+      // Si grupoId es undefined, navega a groups/undefined
+
+  BIEN: (Node — validacion al inicio)
+      const payload = JSON.parse(process.argv[2]);
+      const required = ['cookies', 'grupoId'];
+      for (const field of required) {
+          if (!payload[field]) {
+              console.log(JSON.stringify({
+                  status: 'error',
+                  message: `Campo requerido faltante: ${field}`
+              }));
+              process.exit(1);
+          }
+      }
+
+  [ ] Cada script JS valida campos requeridos del payload al inicio
+  [ ] Tipos de datos validados (string, array segun corresponda)
+  [ ] Sin asumir que el payload PHP llega completo a Node
+
+
+--------------------------------------------------------------------------------
+REGLA 8 — VERIFICACION DE NODE.JS DISPONIBLE  [A]         BLOQUEA deploy si FAIL
+--------------------------------------------------------------------------------
+Si Node.js no esta instalado o no esta en el PATH, Process::run falla
+con un error poco descriptivo. El Service debe verificar disponibilidad
+antes de intentar ejecutar scripts.
+
+Aplica a: Services (Process::run), Commands Artisan
+
+  MAL:
+      $result = Process::run(['node', 'script.js', $json]);
+      // Si node no existe: error 255, output vacio
+      // El codigo asume que el fallo fue del script, no del entorno
+
+  BIEN:
+      $nodeCheck = Process::run(['node', '--version']);
+      if (!$nodeCheck->successful()) {
+          throw new \RuntimeException(
+              'Node.js no esta disponible en el PATH. ' .
+              'Verifica la instalacion.'
+          );
+      }
+
+      // Cachear el check para no ejecutarlo cada vez:
+      // Cache::remember('node_available', 3600, fn() => ...)
+
+  BIEN (en comando Artisan — fallar temprano):
+      public function handle(): void
+      {
+          if (!$this->nodeIsAvailable()) {
+              $this->error('Node.js no esta instalado o no esta en el PATH.');
+              return Command::FAILURE;
+          }
+          // ...
+      }
+
+  [ ] Verificacion de Node.js disponible antes de Process::run
+  [ ] Error claro al usuario si Node.js no esta instalado
+  [ ] Mensaje de error en logs distingue "Node no disponible" de "script fallo"
+
+
+PASO 1 — VERIFICACION CRUZADA
+================================================================================
+
+  [ ] Todo Process::run          ↔  tiene timeout explicito            (R2)
+  [ ] Todo json_decode(output)   ↔  validado contra null/error         (R3)
+  [ ] Todo payload con cookies   ↔  sin loggear datos sensibles        (R4)
+  [ ] Todo script Node           ↔  valida campos requeridos           (R7)
+  [ ] Todo catch en Node         ↔  devuelve JSON valido siempre       (R3)
+  [ ] Ejecución en entorno Sandbox ↔  restricción de red/filesystem     (R9)
+  [ ] Auditoría de paquetes NPM  ↔  npm audit sin vulnerabilidades     (R10)
+
+
+--------------------------------------------------------------------------------
+REGLA 9 — SANDBOX Y AISLAMIENTO DE EJECUCIÓN  [A]        BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+Los procesos externos deben tener acceso mínimo necesario.
+
+  [ ] El usuario del sistema operativo (www-data/root) no tiene permisos excesivos.
+  [ ] Los scripts Node no intentan escribir en directorios fuera de `storage/`.
+  [ ] Si usa Puppeteer: --disable-setuid-sandbox y --no-sandbox configurados correctamente.
+
+--------------------------------------------------------------------------------
+REGLA 10 — DEPENDENCIAS DE NODE SEGURAS (NPM AUDIT) [A]  BLOQUEA si FAIL
+--------------------------------------------------------------------------------
+Evitar el uso de paquetes de Node con vulnerabilidades.
+
+  [ ] Ejecutar `npm audit` periódicamente.
+  [ ] Revisar `package-lock.json` para asegurar consistencia.
+
+
+PASO 2 — RESUMEN DEL CICLO
+================================================================================
+
+  Scripts JS auditados:     ___________________________________
+  Llamadas Process::run:    ___________________________________
+  Fecha:                    ___________________________________
+  Ciclo / tarea:            ___________________________________
+
+  Reglas aplicadas:         ___  de 8
+  OK: ___   FAIL: ___   N/A: ___   M: ___
+
+  DECISION:
+  [ ] APROBADO  — Todos los [C] y [A] en OK.
+  [ ] BLOQUEADO — Hay FAIL en [C] o [A]. Corregir antes de deploy.
+  [ ] NO APLICA — El proyecto no tiene Node.js / JS.
+  [ ] OBSERVACIONES: _____________________________________________
+
+
+MATRIZ RAPIDA
+================================================================================
+
+Services (Process::run)    →  R1, R2, R3, R4, R5, R8
+  Scripts Node.js (.js)      →  R3, R5, R7
+  Commands Artisan           →  R1, R2, R4, R8
+  FileUpload / assets        →  R6
+
+
+===============================================================================
+FIN DEL CHECKLIST DE AUDITORIA JS / NODE
+================================================================================
